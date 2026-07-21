@@ -76,10 +76,10 @@ export const complianceAlerts = [
 ]
 
 export const analyticsSignals = [
-  { symbol: 'AAPL', indicator: 'RSI(14)', value: 71.2, signal: 'Overbought' },
-  { symbol: 'MSFT', indicator: 'MACD', value: -0.42, signal: 'Bearish crossover' },
-  { symbol: 'NVDA', indicator: '50/200 SMA', value: 1.08, signal: 'Golden cross' },
-  { symbol: 'ES FUT', indicator: 'Bollinger %B', value: 0.94, signal: 'Near upper band' },
+  { symbol: 'AAPL', indicator: 'RSI(14)', value: 71.2, signal: 'Overbought', trend: [62, 64, 66, 69, 70, 71.2] },
+  { symbol: 'MSFT', indicator: 'MACD', value: -0.42, signal: 'Bearish crossover', trend: [0.3, 0.15, 0.05, -0.1, -0.28, -0.42] },
+  { symbol: 'NVDA', indicator: '50/200 SMA', value: 1.08, signal: 'Golden cross', trend: [0.94, 0.97, 1.0, 1.03, 1.06, 1.08] },
+  { symbol: 'ES FUT', indicator: 'Bollinger %B', value: 0.94, signal: 'Near upper band', trend: [0.6, 0.68, 0.78, 0.85, 0.9, 0.94] },
 ]
 
 export const paperStrategies = [

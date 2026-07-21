@@ -1,4 +1,5 @@
 import { Card, Badge } from '../components/ui.jsx'
+import Sparkline from '../components/charts/Sparkline.jsx'
 import { analyticsSignals } from '../data/mockData.js'
 
 const SIGNAL_TONE = {
@@ -6,6 +7,13 @@ const SIGNAL_TONE = {
   'Bearish crossover': 'medium',
   'Golden cross': 'healthy',
   'Near upper band': 'low',
+}
+
+const SPARK_TONE = {
+  Overbought: 'bad',
+  'Bearish crossover': 'bad',
+  'Golden cross': 'good',
+  'Near upper band': 'neutral',
 }
 
 export default function Analytics() {
@@ -25,6 +33,7 @@ export default function Analytics() {
             <tr>
               <th>Symbol</th>
               <th>Indicator</th>
+              <th>Trend</th>
               <th>Value</th>
               <th>Signal</th>
             </tr>
@@ -34,6 +43,9 @@ export default function Analytics() {
               <tr key={i}>
                 <td className="mono">{s.symbol}</td>
                 <td>{s.indicator}</td>
+                <td>
+                  <Sparkline values={s.trend} tone={SPARK_TONE[s.signal] || 'neutral'} />
+                </td>
                 <td>{s.value}</td>
                 <td>
                   <Badge status={SIGNAL_TONE[s.signal] || 'neutral'}>{s.signal}</Badge>

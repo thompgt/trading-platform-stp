@@ -571,6 +571,11 @@ code {
   color: var(--text);
 }
 
+.copilot-answer.copilot-error {
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
 /* Error boundary */
 .error-boundary {
   background: var(--bad-bg);
