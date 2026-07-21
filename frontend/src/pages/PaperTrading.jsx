@@ -19,6 +19,13 @@ const SPEED_OPTIONS = [
   { label: '1x', ms: 300 },
   { label: '0.5x', ms: 700 },
 ]
+const INTERVAL_OPTIONS = [
+  { label: 'Daily', value: '1d' },
+  { label: '1 hour', value: '60m' },
+  { label: '30 min', value: '30m' },
+  { label: '15 min', value: '15m' },
+  { label: '5 min', value: '5m' },
+]
 
 function isoDate(d) {
   return d.toISOString().slice(0, 10)
@@ -31,9 +38,18 @@ function defaultDateRange() {
   return { period1: isoDate(start), period2: isoDate(end) }
 }
 
+/** Most recent completed trading day (skips weekends — a rough proxy, not a holiday calendar). */
+function lastTradingDay() {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1)
+  return d
+}
+
 export default function PaperTrading() {
   const [symbol, setSymbol] = useState('AAPL')
   const [{ period1, period2 }, setRange] = useState(defaultDateRange)
+  const [barInterval, setBarInterval] = useState('1d')
   const [strategy, setStrategy] = useState(DEFAULT_STRATEGY)
   const [strategyMeta, setStrategyMeta] = useState(null) // { name, rationale } from AI generation
 
@@ -66,8 +82,34 @@ export default function PaperTrading() {
   async function handleFetchData(e) {
     e.preventDefault()
     await withBusy('fetch', async () => {
-      const result = await fetchMarketData(symbol, period1, period2)
+      const result = await fetchMarketData(symbol, period1, period2, barInterval)
       setDataInfo(result)
+    })
+  }
+
+  /** Pulls one trading day of intraday bars from Yahoo Finance into DuckDB and immediately
+   * starts replaying that day's simulation — a quick path to "rerun a day's trading". */
+  async function handleReplayDay() {
+    const day = lastTradingDay()
+    const nextDay = new Date(day)
+    nextDay.setDate(nextDay.getDate() + 1)
+    const p1 = isoDate(day)
+    const p2 = isoDate(nextDay)
+
+    setRange({ period1: p1, period2: p2 })
+    setBarInterval('5m')
+
+    await withBusy('replay-day', async () => {
+      const fetchResult = await fetchMarketData(symbol, p1, p2, '5m')
+      setDataInfo(fetchResult)
+      const [barsRes, simRes] = await Promise.all([
+        getBars(symbol, { start: p1, end: p2 }),
+        startSimulation({ symbol, start: p1, end: p2, strategy }),
+      ])
+      setAllBars(barsRes.bars)
+      setSessionId(simRes.sessionId)
+      setSimState(simRes)
+      setPlaying(false)
     })
   }
 
@@ -199,8 +241,21 @@ export default function PaperTrading() {
               onChange={(e) => setRange((r) => ({ ...r, period2: e.target.value }))}
             />
           </label>
+          <label>
+            Bar size
+            <select value={barInterval} onChange={(e) => setBarInterval(e.target.value)} aria-label="Bar interval">
+              {INTERVAL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button type="submit" disabled={busy === 'fetch'}>
             {busy === 'fetch' ? 'Fetching…' : 'Fetch Data'}
+          </button>
+          <button type="button" onClick={handleReplayDay} disabled={busy === 'replay-day'} className="ai-button">
+            {busy === 'replay-day' ? 'Loading day…' : '⏵ Replay Last Trading Day'}
           </button>
         </form>
         {dataInfo && (

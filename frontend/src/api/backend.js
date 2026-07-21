@@ -1,8 +1,8 @@
 import { get, post, put } from './client.js'
 
 export const listSymbols = () => get('/data/symbols')
-export const fetchMarketData = (symbol, period1, period2) =>
-  post('/data/fetch', { symbol, period1, period2 })
+export const fetchMarketData = (symbol, period1, period2, interval) =>
+  post('/data/fetch', { symbol, period1, period2, interval })
 export const getBars = (symbol, { start, end } = {}) => {
   const params = new URLSearchParams()
   if (start) params.set('start', start)
