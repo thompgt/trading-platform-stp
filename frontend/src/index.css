@@ -566,11 +566,34 @@ code {
 .bar-neg {
   background: var(--bad);
 }
+.bar-warn {
+  background: var(--warn);
+}
+.bar-accent {
+  background: var(--series-1);
+}
 
 .bar-value {
   text-align: right;
   font-family: var(--mono);
   font-size: 12.5px;
+}
+
+.meter {
+  display: grid;
+  grid-template-columns: 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  min-width: 110px;
+}
+.meter-track {
+  height: 6px;
+}
+.meter-value {
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--neutral);
 }
 
 /* Copilot */
