@@ -111,6 +111,42 @@ describe('API routes', () => {
       expect(Array.isArray(stepped.body.trades)).toBe(true)
       expect(Array.isArray(stepped.body.equityCurve)).toBe(true)
     })
+
+    it('GET /:id/risk returns rules-based alerts with no LLM involved', async () => {
+      await storeBars(db, sampleBars('TEST'))
+      const start = await request(app)
+        .post('/api/simulation/start')
+        .send({ symbol: 'TEST', strategy: { kind: 'sma_crossover', params: { fastPeriod: 2, slowPeriod: 5 } } })
+      const { sessionId } = start.body
+      await request(app).post(`/api/simulation/${sessionId}/step`).send({ n: 20 })
+
+      const res = await request(app).get(`/api/simulation/${sessionId}/risk`)
+      expect(res.status).toBe(200)
+      expect(res.body.symbol).toBe('TEST')
+      expect(Array.isArray(res.body.alerts)).toBe(true)
+    })
+
+    it('GET /:id/compliance drafts triage narratives from the (mocked) LLM when a pattern is detected', async () => {
+      await storeBars(db, sampleBars('TEST'))
+      const start = await request(app)
+        .post('/api/simulation/start')
+        .send({ symbol: 'TEST', strategy: { kind: 'sma_crossover', params: { fastPeriod: 2, slowPeriod: 3 } } })
+      const { sessionId } = start.body
+      await request(app).post(`/api/simulation/${sessionId}/step`).send({ n: 20 })
+
+      _setGroqClientForTesting(
+        fakeGroqClient([
+          JSON.stringify({
+            explanation: 'Trades reverse side frequently across the session.',
+            recommendation: 'Review order timing against quotes.',
+          }),
+        ]),
+      )
+      const res = await request(app).get(`/api/simulation/${sessionId}/compliance`)
+      expect(res.status).toBe(200)
+      expect(res.body.symbol).toBe('TEST')
+      expect(Array.isArray(res.body.drafts)).toBe(true)
+    })
   })
 
   describe('/api/strategy/generate', () => {

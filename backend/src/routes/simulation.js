@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { loadBars } from '../data/marketData.js'
 import { SimulationEngine } from '../simulation/engine.js'
 import { STRATEGY_KINDS } from '../simulation/strategyRunner.js'
+import { evaluateRisk } from '../agents/riskEngine.js'
+import { draftComplianceTriage } from '../agents/complianceAgent.js'
+import { LlmValidationError } from '../agents/llmJson.js'
 
 // In-memory session store. Fine for a single-instance demo/paper-trading server; a real
 // deployment would move this to a shared store (workplan.md §8 notes horizontal scaling
@@ -98,6 +101,39 @@ export function simulationRouter(db) {
       const state = engine.reset()
       res.json({ sessionId: req.params.id, symbol, ...state })
     } catch (err) {
+      res.status(err.status ?? 500).json({ error: err.message })
+    }
+  })
+
+  router.get('/:id/risk', (req, res) => {
+    try {
+      const { engine, symbol } = getSession(req.params.id)
+      const state = engine.state()
+      const currentPrice = state.currentBar?.close ?? null
+      const alerts = evaluateRisk({
+        symbol,
+        cash: state.cash,
+        position: state.position,
+        currentPrice,
+        startingCash: engine.startingCash,
+        equityCurve: state.equityCurve,
+      })
+      res.json({ sessionId: req.params.id, symbol, alerts })
+    } catch (err) {
+      res.status(err.status ?? 500).json({ error: err.message })
+    }
+  })
+
+  router.get('/:id/compliance', async (req, res) => {
+    try {
+      const { engine, symbol } = getSession(req.params.id)
+      const state = engine.state()
+      const drafts = await draftComplianceTriage({ symbol, trades: state.trades })
+      res.json({ sessionId: req.params.id, symbol, drafts })
+    } catch (err) {
+      if (err instanceof LlmValidationError) {
+        return res.status(502).json({ error: err.message, kind: 'llm_validation_failed' })
+      }
       res.status(err.status ?? 500).json({ error: err.message })
     }
   })
