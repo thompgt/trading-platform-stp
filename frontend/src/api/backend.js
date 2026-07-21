@@ -23,3 +23,6 @@ export const setSimulationStrategy = (sessionId, strategy) =>
 
 export const generateStrategy = (symbol, context) => post('/strategy/generate', { symbol, context })
 export const askCopilot = (question, facts) => post('/copilot/ask', { question, facts })
+
+export const getSessionRisk = (sessionId) => get(`/simulation/${sessionId}/risk`)
+export const getSessionCompliance = (sessionId) => get(`/simulation/${sessionId}/compliance`)
