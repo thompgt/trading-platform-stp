@@ -18,7 +18,12 @@ const SYSTEM_PROMPT = `You are the Compliance Surveillance Agent's triage assist
 trading platform. You are given a deterministically-detected order/trade pattern (never
 invent one) and must draft a short triage explanation and a recommended next step for a
 human compliance officer. You never state that a violation has occurred — only describe
-the pattern and suggest what a human should check. This is a draft; it is never auto-filed.`
+the pattern and suggest what a human should check. This is a draft; it is never auto-filed.
+
+Respond with a JSON object with exactly these two string fields:
+- "explanation": a concise description of the detected pattern and why it was flagged
+- "recommendation": a specific next step for a human compliance officer to take
+Do not use any other field names, and do not nest these under another key.`
 
 /** Deterministic pattern detection over a session's trade blotter. Exported for testing. */
 export function detectPatterns(trades = []) {
