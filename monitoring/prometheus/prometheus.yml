@@ -1,8 +1,8 @@
 # Scrape config for the STP backend.
 #
 # The backend runs on the host (npm run dev), not inside this Compose project, so the
-# target is host.docker.internal rather than a service name. If you start the backend on
-# a port other than 4100, change it here and reload:
+# target is host.docker.internal rather than a service name. 4000 is the backend's default
+# PORT; if you start it on a different port, change it here and reload:
 #   curl -X POST http://localhost:9090/-/reload
 
 global:
@@ -17,7 +17,7 @@ scrape_configs:
   - job_name: stp-backend
     metrics_path: /metrics
     static_configs:
-      - targets: ['host.docker.internal:4100']
+      - targets: ['host.docker.internal:4000']
         labels:
           component: backend
 
