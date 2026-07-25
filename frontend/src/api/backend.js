@@ -23,6 +23,12 @@ export const resetSimulation = (sessionId) => post(`/simulation/${sessionId}/res
 export const setSimulationStrategy = (sessionId, strategy) =>
   put(`/simulation/${sessionId}/strategy`, { strategy })
 
+export const getSignals = (symbols) => {
+  const qs = symbols?.length ? `?symbols=${encodeURIComponent(symbols.join(','))}` : ''
+  return get(`/analytics/signals${qs}`)
+}
+export const getIndicators = (symbol) => get(`/analytics/indicators/${symbol}`)
+
 export const generateStrategy = (symbol, context) => post('/strategy/generate', { symbol, context })
 export const askCopilot = (question, facts) => post('/copilot/ask', { question, facts })
 
