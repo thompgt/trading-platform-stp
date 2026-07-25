@@ -9,6 +9,7 @@ import Reporting from './pages/Reporting.jsx'
 import Analytics from './pages/Analytics.jsx'
 import PaperTrading from './pages/PaperTrading.jsx'
 import AgentActivity from './pages/AgentActivity.jsx'
+import SystemHealth from './pages/SystemHealth.jsx'
 
 export default function App() {
   const location = useLocation()
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/paper-trading" element={<PaperTrading />} />
             <Route path="/agents" element={<AgentActivity />} />
+            <Route path="/system-health" element={<SystemHealth />} />
           </Routes>
         </ErrorBoundary>
       </main>

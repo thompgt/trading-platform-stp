@@ -26,6 +26,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/risk-compliance', label: 'Risk & Compliance', icon: '⚠' },
       { to: '/agents', label: 'Agent Activity', icon: '⚙' },
+      { to: '/system-health', label: 'System Health', icon: '♥' },
     ],
   },
 ]
