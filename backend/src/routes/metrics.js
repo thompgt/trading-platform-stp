@@ -23,9 +23,25 @@ function total(snapshot, name, labelFilter = {}) {
     .reduce((sum, v) => sum + v.value, 0)
 }
 
-/** Single (unlabelled) gauge value. */
+/** Single (unlabelled) gauge value, or 0 if absent. */
 function gauge(snapshot, name) {
   return valuesOf(snapshot, name)[0]?.value ?? 0
+}
+
+/**
+ * First gauge in `names` with a finite value.
+ *
+ * prom-client resets its event-loop-lag histogram every time it's collected, so a
+ * Prometheus scrape landing between two UI polls leaves the *mean* with no samples and it
+ * reports NaN. Falling back to the instantaneous lag gauge — which isn't reset — keeps the
+ * dashboard from flickering to "—" at every scrape.
+ */
+function firstFiniteGauge(snapshot, ...names) {
+  for (const name of names) {
+    const value = valuesOf(snapshot, name)[0]?.value
+    if (Number.isFinite(value)) return value
+  }
+  return 0
 }
 
 /** Mean observation of a histogram, in milliseconds — sum/count, or 0 before any data. */
@@ -108,7 +124,12 @@ export function metricsRouter() {
           residentMemoryMb: gauge(snapshot, 'stp_process_resident_memory_bytes') / 1024 / 1024,
           heapUsedMb: total(snapshot, 'stp_nodejs_heap_size_used_bytes') / 1024 / 1024,
           cpuSecondsTotal: gauge(snapshot, 'stp_process_cpu_seconds_total'),
-          eventLoopLagMs: gauge(snapshot, 'stp_nodejs_eventloop_lag_mean_seconds') * 1000,
+          eventLoopLagMs:
+            firstFiniteGauge(
+              snapshot,
+              'stp_nodejs_eventloop_lag_mean_seconds',
+              'stp_nodejs_eventloop_lag_seconds',
+            ) * 1000,
           activeHandles: gauge(snapshot, 'stp_nodejs_active_handles_total'),
         },
         http: {

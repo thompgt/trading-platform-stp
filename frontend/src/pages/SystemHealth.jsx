@@ -138,6 +138,7 @@ export default function SystemHealth() {
               toneFor={() => 'neutral'}
               formatValue={(v) => num(v)}
               emptyLabel="No requests recorded yet."
+              labelWidth="260px"
             />
           </Card>
 

@@ -6,7 +6,15 @@ const TONE_CLASS = { good: 'bar-pos', bad: 'bar-neg', warn: 'bar-warn', neutral:
  * sign of value, i.e. polarity); pass a constant tone for chart where every bar shares
  * one meaning (e.g. gross exposure — magnitude only, no polarity).
  */
-export default function BarChart({ items, toneFor, formatValue = (v) => v.toFixed(0), emptyLabel = 'No data.' }) {
+export default function BarChart({
+  items,
+  toneFor,
+  formatValue = (v) => v.toFixed(0),
+  emptyLabel = 'No data.',
+  // Width of the label column. Tickers fit the 80px default; long labels such as route
+  // patterns need more room, and would otherwise truncate to an ellipsis.
+  labelWidth,
+}) {
   if (!items || items.length === 0) {
     return <p className="empty-state">{emptyLabel}</p>
   }
@@ -14,7 +22,7 @@ export default function BarChart({ items, toneFor, formatValue = (v) => v.toFixe
   const max = Math.max(...items.map((i) => Math.abs(i.value)), 0)
 
   return (
-    <div className="bar-chart">
+    <div className="bar-chart" style={labelWidth ? { '--bar-label-width': labelWidth } : undefined}>
       {items.map((item) => {
         const pct = max === 0 ? 0 : Math.round((Math.abs(item.value) / max) * 100)
         const tone = toneFor ? toneFor(item) : item.value >= 0 ? 'good' : 'bad'

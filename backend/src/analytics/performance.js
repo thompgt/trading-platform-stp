@@ -31,6 +31,13 @@ export function inferPeriodsPerYear(bars) {
   gaps.sort((a, b) => a - b)
   const median = gaps[Math.floor(gaps.length / 2)]
 
+  // A series with *no* dominant bar size — e.g. daily and 5-minute bars for the same
+  // symbol replayed together — has no meaningful annualization factor, and trusting the
+  // median would scale it as though every bar were 5 minutes, inflating Sharpe roughly
+  // 9x. Fall back to daily when fewer than half the gaps sit near the median.
+  const nearMedian = gaps.filter((g) => g >= median * 0.5 && g <= median * 2).length
+  if (nearMedian / gaps.length < 0.5) return TRADING_PERIODS_PER_YEAR
+
   if (median >= 20 * 60 * 60 * 1000) {
     // Daily or coarser — scale down from 252 for weekly/monthly series.
     return Math.max(1, Math.round(TRADING_PERIODS_PER_YEAR / (median / (24 * 60 * 60 * 1000))))

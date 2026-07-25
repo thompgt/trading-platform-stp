@@ -263,6 +263,18 @@ describe('metrics endpoints', () => {
       expect(res.body.sessions).toEqual([])
     })
 
+    it('reports a finite event-loop lag even when the mean histogram has just been reset', async () => {
+      enableDefaultMetrics()
+      // prom-client resets its event-loop histogram on every collection, so back-to-back
+      // reads leave the mean with no samples and it reports NaN. The second read here
+      // reproduces that; the endpoint must fall back to the instantaneous lag gauge.
+      await register.getMetricsAsJSON()
+      const res = await request(app).get('/api/metrics/summary')
+
+      expect(res.status).toBe(200)
+      expect(Number.isFinite(res.body.process.eventLoopLagMs)).toBe(true)
+    })
+
     it('includes Node process metrics once default collection is enabled', async () => {
       enableDefaultMetrics()
       const res = await request(app).get('/api/metrics/summary')

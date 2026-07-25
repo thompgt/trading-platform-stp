@@ -542,10 +542,19 @@ code {
 
 .bar-row {
   display: grid;
-  grid-template-columns: 80px 1fr 70px;
+  /* Overridable per chart: ticker labels fit in 80px, route patterns need far more. */
+  grid-template-columns: var(--bar-label-width, 80px) 1fr 70px;
   align-items: center;
   gap: 10px;
   font-size: 13px;
+}
+
+/* Long labels truncate rather than overflowing across the track next to them. */
+.bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .bar-track {

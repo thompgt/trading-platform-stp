@@ -63,6 +63,19 @@ describe('inferPeriodsPerYear', () => {
     expect(inferPeriodsPerYear(series(10, 7 * 24 * 60 * 60 * 1000))).toBe(36)
   })
 
+  it('falls back to daily for a series with no dominant bar size', () => {
+    // Daily and 5-minute bars for one symbol replayed together. The median gap is 5
+    // minutes, but scaling by that would inflate Sharpe roughly 9x on a series that is
+    // mostly daily — so this must not be trusted.
+    const fiveMin = 5 * 60 * 1000
+    const day = 24 * 60 * 60 * 1000
+    const base = new Date('2024-01-02T14:30:00Z').getTime()
+    const bars = []
+    for (let i = 0; i < 40; i++) bars.push({ ts: new Date(base + i * fiveMin).toISOString() })
+    for (let i = 1; i <= 40; i++) bars.push({ ts: new Date(base + 10 * day + i * day).toISOString() })
+    expect(inferPeriodsPerYear(bars)).toBe(252)
+  })
+
   it('uses the median so overnight gaps do not drag an intraday series toward daily', () => {
     const fiveMin = 5 * 60 * 1000
     const base = new Date('2024-01-02T14:30:00Z').getTime()
