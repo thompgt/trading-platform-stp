@@ -1,0 +1,28 @@
+# Scrape config for the STP backend.
+#
+# The backend runs on the host (npm run dev), not inside this Compose project, so the
+# target is host.docker.internal rather than a service name. If you start the backend on
+# a port other than 4100, change it here and reload:
+#   curl -X POST http://localhost:9090/-/reload
+
+global:
+  # 5s rather than the usual 15s: replay sessions move fast, and a coarse interval makes
+  # the P&L panels look like step functions.
+  scrape_interval: 5s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: stp-local
+
+scrape_configs:
+  - job_name: stp-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['host.docker.internal:4100']
+        labels:
+          component: backend
+
+  # Prometheus watching itself — useful for telling "the backend is down" apart from
+  # "the scraper is down" when a panel goes empty.
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
