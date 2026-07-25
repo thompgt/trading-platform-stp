@@ -4,23 +4,98 @@ A design exercise and working scaffold for a multi-agent, gen-AI-assisted straig
 processing (STP) trading platform covering order execution, portfolio management,
 reporting & charting, technical analytics, and paper trading.
 
+## Architecture
+
+What is actually built and running today — the full designed agent roster, including the
+agents still to be implemented, is in [workplan.md](./workplan.md) §2.
+
+```mermaid
+flowchart TB
+    subgraph UI["Frontend — Vite + React SPA"]
+        direction LR
+        LivePages["Paper Trading · Risk &amp; Compliance<br/>Technical Analytics · System Health<br/>Reporting copilot"]
+        MockPages["Dashboard · Order Blotter<br/>Portfolio · Agent Activity<br/><i>mock data, ahead of their agents</i>"]
+    end
+
+    subgraph API["Backend — Node.js / Express"]
+        direction LR
+        Routes["/api/data · /api/simulation<br/>/api/analytics · /api/strategy<br/>/api/copilot · /api/metrics"]
+    end
+
+    subgraph Rules["Deterministic agents — reproducible, no model"]
+        direction LR
+        Replay["Replay engine<br/><i>step · rewind · jump</i>"]
+        Perf["Performance analytics<br/><i>P&amp;L · drawdown · Sharpe</i>"]
+        TA["Technical Analytics<br/><i>indicators · signals</i>"]
+        Risk["Market / Pre-Trade Risk<br/><i>concentration · drawdown · vol</i>"]
+        Patterns["Compliance pattern detection"]
+    end
+
+    subgraph GenAI["Gen-AI agents — Groq, schema-validated, draft-only"]
+        direction LR
+        Strategy["Strategy Generation"]
+        Copilot["Research Copilot"]
+        Triage["Compliance triage narrative"]
+    end
+
+    subgraph Data["Storage &amp; upstreams"]
+        direction LR
+        Duck[("DuckDB<br/>cached bars")]
+        Yahoo["Yahoo Finance"]
+    end
+
+    subgraph Obs["Observability"]
+        direction LR
+        Metrics["/metrics"]
+        Prom["Prometheus"]
+        Graf["Grafana"]
+    end
+
+    LivePages -->|HTTP JSON| Routes
+    Routes --> Rules
+    Routes --> GenAI
+    Replay --> Perf
+    Perf --> Risk
+    Risk --> Patterns
+    Patterns -.->|detected patterns only| Triage
+    Rules --> Duck
+    TA --> Duck
+    Yahoo -->|fetch once| Duck
+    GenAI -.->|proposals &amp; drafts,<br/>never auto-executed| Routes
+    Routes --> Metrics
+    Metrics --> Prom
+    Prom --> Graf
+    LivePages -->|System Health page| Metrics
+```
+
+Two properties the diagram is meant to make obvious, both from `workplan.md` §5/§7:
+
+- **Gen-AI never has a write path to anything irreversible.** The Groq agents return
+  proposals and drafts through the API; a human accepts them. Compliance patterns are
+  detected deterministically first, and the model only writes the narrative explaining an
+  alert that code already raised.
+- **Everything a number is claimed for is deterministic.** Signals, risk alerts, P&L and
+  the replay itself are pure functions of the cached bars, so the same inputs always give
+  the same output and any figure on screen can be re-derived.
+
 - **[workplan.md](./workplan.md)** — full architecture and design document: the agent
   roster, trade lifecycle / settlement / risk & compliance workflows, AWS + DevOps
   platform, and phased build roadmap.
 - **[backend/](./backend)** — Node.js/Express API: fetches historical (including intraday)
   market data from Yahoo Finance and caches it in DuckDB, replays it bar-by-bar for paper
   trading (step, rewind, jump-to-date/resimulate, or one-click replay of the last trading
-  day at 5-minute bars), and runs four agents — two Groq-backed (strategy generation,
+  day at 5-minute bars), and runs five agents — two Groq-backed (strategy generation,
   research copilot) that only ever return schema-validated output, a deterministic
   rules-based Market/Pre-Trade Risk agent (concentration, drawdown, volatility limits),
-  and a Compliance Surveillance agent (deterministic pattern detection, Groq drafts the
-  human-readable triage narrative — draft-only, never auto-filed).
+  a Compliance Surveillance agent (deterministic pattern detection, Groq drafts the
+  human-readable triage narrative — draft-only, never auto-filed), and a Technical
+  Analytics agent (indicator library plus rules-based signal generation, no model at all).
 - **[frontend/](./frontend)** — Vite + React (JavaScript) dashboard UI with navigation
   across all major feature areas (dashboard, order blotter, portfolio, risk & compliance,
   reporting, technical analytics, paper trading, agent activity, system health). Paper
-  Trading, Risk & Compliance, System Health, and the Reporting copilot/allocation chart are
-  wired to the real backend; the rest of the UI is still backed by mock data matching the
-  shapes described in the workplan.
+  Trading, Risk & Compliance, Technical Analytics, System Health, and the Reporting
+  copilot/allocation chart are wired to the real backend; the rest of the UI is still
+  backed by mock data matching the shapes described in the workplan.
 - **[monitoring/](./monitoring)** — a provisioned Prometheus + Grafana stack in Docker
   Compose. The backend exports both service metrics (HTTP, DuckDB, Groq agents, Node
   runtime) and live trading metrics (equity, P&L, drawdown, exposure, Sharpe per replayed
@@ -82,14 +157,29 @@ panels live.
 
 ![Agent Activity](./docs/screenshots/agent-activity.png)
 
-### Order Blotter, Portfolio, and Technical Analytics
+### Technical Analytics — deterministic indicators and signals
 
-These three are still mock-data UI ahead of the corresponding backend agents.
+RSI, MACD, the 50/200 SMA cross and Bollinger %B computed over the bars already cached in
+DuckDB, each with a signal label, a bullish/bearish/neutral direction, and a strength
+normalized so the meter is comparable across indicators and across symbols at different
+price levels. No model is involved — the same bars always give the same signals.
+
+An indicator the loaded history is too short for is listed separately with the reason
+rather than quietly recomputed over a shorter period than its name claims, so a 40-bar
+series doesn't silently report something called a "50/200 SMA" cross.
+
+![Technical Analytics](./docs/screenshots/analytics.png)
+
+*Screenshot predates the live wiring — the layout is unchanged, but the rows now come from
+real cached bars rather than the sample data.*
+
+### Order Blotter and Portfolio
+
+These two are still mock-data UI ahead of the corresponding backend agents.
 
 | | |
 |---|---|
 | ![Order Blotter](./docs/screenshots/order-blotter.png) | ![Portfolio](./docs/screenshots/portfolio.png) |
-| ![Technical Analytics](./docs/screenshots/analytics.png) | |
 
 ## Running it
 
@@ -168,7 +258,8 @@ Prometheus scrapes `host.docker.internal:4000` rather than a Compose service nam
   `validation_failed` (the model never produced schema-valid JSON) from `error` (the API
   call itself failed), so "Groq is down" and "Groq is rambling" don't look alike.
 - *Trading* — per-symbol equity, cumulative P&L, current and max drawdown, exposure,
-  Sharpe and trade count, republished on every replay action. Stepping the simulation in
+  Sharpe and trade count, republished on every replay action; plus technical-analytics
+  signals counted by indicator and direction. Stepping the simulation in
   the UI moves the Grafana P&L chart.
 
 HTTP metrics are labelled with the matched **route pattern**, not the raw URL — replay
@@ -197,7 +288,12 @@ and `complianceAgent.js`'s deterministic pattern detection plus its Groq-drafted
 narrative). `strategyAgent.js`, `copilotAgent.js`, and `complianceAgent.js` all validate
 model output against a `zod` schema before it's ever used.
 
-They also cover the performance analytics (`performance.js` — P&L, drawdown, Sharpe, win
+They also cover the technical analytics — the indicator library (`indicators.js`:
+warm-up windows, EMA seeding, MACD alignment, the zero-width Bollinger band, and ATR
+across a price gap) and the signal generator (`signals.js`: crossover labelling on the bar
+it happens, direction taken from the MACD line rather than its flattening histogram,
+strength normalized per symbol, and short series reported as skipped instead of
+recomputed) — the performance analytics (`performance.js` — P&L, drawdown, Sharpe, win
 rate, exposure, plus the guards that keep an empty session from dividing by zero and leave
 genuinely-undefined metrics null rather than reporting a confident `0`) and the metrics
 layer (route-pattern labelling, request/latency/error counting, live P&L gauges, and that a
@@ -216,10 +312,11 @@ by path, so a crash on one page doesn't take down navigation to the rest of the 
 See `workplan.md` §10 for the phased roadmap. Paper trading (market data ingestion,
 DuckDB storage, bar-by-bar replay/resimulation, performance analytics, and the
 strategy/copilot Groq agents), risk & compliance (rules-based risk evaluation plus
-Groq-drafted compliance triage, evaluated live against a simulated session), and
+Groq-drafted compliance triage, evaluated live against a simulated session), technical
+analytics (the indicator library and deterministic signal generation over cached bars), and
 observability (Prometheus instrumentation, the System Health page, and the provisioned
-Grafana stack) are functional end-to-end; most other pages are still mock-data-driven UI
-ahead of the corresponding backend agent work.
+Grafana stack) are functional end-to-end; the Order Blotter, Portfolio, Dashboard and Agent
+Activity pages are still mock-data-driven UI ahead of the corresponding backend agent work.
 
 Known limitations worth knowing about:
 
