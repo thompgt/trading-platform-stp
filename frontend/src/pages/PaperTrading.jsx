@@ -11,7 +11,20 @@ import {
   resetSimulation,
   setSimulationStrategy,
   generateStrategy,
+  getSessionPerformance,
 } from '../api/backend.js'
+
+/** Formatters kept together so every performance tile renders the same way. */
+const fmt = {
+  usd: (v) => `${v < 0 ? '-' : ''}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+  signedUsd: (v) => `${v >= 0 ? '+' : '-'}$${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+  pct: (v) => `${v.toFixed(2)}%`,
+  signedPct: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`,
+  ratio: (v) => v.toFixed(2),
+  // Metrics that are genuinely undefined (no closed trades yet, no losing trades) come
+  // back as null and must not be rendered as a confident "0.00".
+  orDash: (v, format) => (v == null ? '—' : format(v)),
+}
 
 const DEFAULT_STRATEGY = { kind: 'sma_crossover', params: { fastPeriod: 10, slowPeriod: 30 } }
 const SPEED_OPTIONS = [
@@ -63,8 +76,10 @@ export default function PaperTrading() {
   const [busy, setBusy] = useState(null) // which action is in flight, for button disabling
   const [error, setError] = useState(null)
   const [dataInfo, setDataInfo] = useState(null)
+  const [performance, setPerformance] = useState(null)
 
   const stepInFlight = useRef(false)
+  const perfInFlight = useRef(false)
 
   async function withBusy(key, fn) {
     setBusy(key)
@@ -192,6 +207,31 @@ export default function PaperTrading() {
     const id = setInterval(() => doStep(1), speed)
     return () => clearInterval(id)
   }, [playing, speed, doStep])
+
+  const cursor = simState?.cursor
+  // Refresh performance whenever the replay position moves. The in-flight guard keeps
+  // fast playback from queueing a request per bar, and a failure here is left silent:
+  // analytics going stale must not surface as an error over a working simulation.
+  useEffect(() => {
+    if (!sessionId) {
+      setPerformance(null)
+      return
+    }
+    if (perfInFlight.current) return
+    let cancelled = false
+    perfInFlight.current = true
+    getSessionPerformance(sessionId)
+      .then((res) => {
+        if (!cancelled) setPerformance(res.performance)
+      })
+      .catch(() => {})
+      .finally(() => {
+        perfInFlight.current = false
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId, cursor])
 
   const visibleBars = useMemo(() => allBars.slice(0, simState?.cursor ?? 0), [allBars, simState])
   const equityCurve = simState?.equityCurve ?? []
@@ -468,6 +508,86 @@ export default function PaperTrading() {
           </>
         )}
       </Card>
+
+      {performance && performance.barsElapsed > 0 && (
+        <Card
+          title="4. Performance & Monitoring"
+          subtitle="Computed deterministically from the equity curve and trade tape — the same numbers Prometheus exports to Grafana"
+        >
+          <div className="stat-grid">
+            <StatTile
+              label="Total P&L"
+              value={fmt.signedUsd(performance.totalPnl)}
+              delta={fmt.signedPct(performance.totalReturnPct)}
+              deltaTone={performance.totalPnl >= 0 ? 'tone-good' : 'tone-bad'}
+            />
+            <StatTile
+              label="Max Drawdown"
+              value={fmt.pct(performance.maxDrawdownPct)}
+              delta={`now ${fmt.pct(performance.currentDrawdownPct)}`}
+              deltaTone={performance.currentDrawdownPct > 0 ? 'tone-warn' : 'tone-good'}
+            />
+            <StatTile
+              label="Sharpe"
+              value={fmt.ratio(performance.sharpe)}
+              delta={`Sortino ${fmt.ratio(performance.sortino)}`}
+            />
+            <StatTile
+              label="Volatility"
+              value={fmt.pct(performance.volatilityPct)}
+              delta="annualized"
+            />
+          </div>
+
+          <div className="stat-grid">
+            <StatTile
+              label="Win Rate"
+              value={fmt.orDash(performance.winRatePct, fmt.pct)}
+              delta={`${performance.winCount}W / ${performance.lossCount}L`}
+            />
+            <StatTile
+              label="Profit Factor"
+              value={fmt.orDash(performance.profitFactor, fmt.ratio)}
+              delta={`${performance.roundTripCount} round trips`}
+            />
+            <StatTile
+              label="Exposure"
+              value={fmt.pct(performance.exposurePct)}
+              delta="of bars in market"
+            />
+            <StatTile
+              label="Best / Worst Trade"
+              value={`${fmt.orDash(performance.bestTradePct, fmt.signedPct)} / ${fmt.orDash(
+                performance.worstTradePct,
+                fmt.signedPct,
+              )}`}
+            />
+          </div>
+
+          <h2 className="chart-subhead">Cumulative P&amp;L</h2>
+          <LineSeriesChart
+            data={performance.pnlCurve}
+            xKey="ts"
+            yKey="pnl"
+            color={performance.totalPnl >= 0 ? 'var(--good)' : 'var(--bad)'}
+            formatY={(v) => fmt.signedUsd(v)}
+            referenceValue={0}
+            markers={trades}
+            emptyLabel="No P&L history yet."
+          />
+
+          <h2 className="chart-subhead">Drawdown from Peak</h2>
+          <LineSeriesChart
+            data={performance.drawdownCurve}
+            xKey="ts"
+            yKey="drawdown"
+            color="var(--bad)"
+            formatY={(v) => `${v.toFixed(1)}%`}
+            referenceValue={0}
+            emptyLabel="No drawdown history yet."
+          />
+        </Card>
+      )}
     </div>
   )
 }

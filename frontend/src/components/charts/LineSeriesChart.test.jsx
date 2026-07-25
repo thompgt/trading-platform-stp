@@ -34,6 +34,52 @@ describe('LineSeriesChart', () => {
     expect(path.getAttribute('d')).not.toMatch(/NaN/)
   })
 
+  describe('reference line', () => {
+    it('is absent unless a referenceValue is given', () => {
+      const { container } = render(<LineSeriesChart data={data} yKey="close" />)
+      expect(container.querySelector('.chart-reference-line')).toBeNull()
+    })
+
+    it('draws a baseline and stretches the domain to include it', () => {
+      // An all-positive P&L series: without the reference the axis would start at 500 and
+      // the chart would imply breakeven sits at its own minimum.
+      const pnl = [
+        { ts: '2024-01-01', pnl: 500 },
+        { ts: '2024-01-02', pnl: 1500 },
+      ]
+      const { container } = render(<LineSeriesChart data={pnl} yKey="pnl" referenceValue={0} />)
+
+      const line = container.querySelector('.chart-reference-line')
+      expect(line).not.toBeNull()
+      // Zero is now the domain floor, so the baseline sits at the bottom of the plot.
+      const labels = [...container.querySelectorAll('.chart-axis-label')].map((n) => n.textContent)
+      expect(labels).toContain('0.00')
+    })
+
+    it('places the baseline inside the plot when the series straddles it', () => {
+      const pnl = [
+        { ts: '2024-01-01', pnl: -1000 },
+        { ts: '2024-01-02', pnl: 1000 },
+      ]
+      const { container } = render(<LineSeriesChart data={pnl} yKey="pnl" referenceValue={0} />)
+      const line = container.querySelector('.chart-reference-line')
+      const y = Number(line.getAttribute('y1'))
+      expect(Number.isNaN(y)).toBe(false)
+      // Symmetric range, so zero lands at the vertical midpoint of the plot area.
+      expect(y).toBeCloseTo(12 + (220 - 12 - 24) / 2, 0)
+    })
+
+    it('does not produce NaN geometry when the reference equals a flat series', () => {
+      const flat = [
+        { ts: '2024-01-01', pnl: 0 },
+        { ts: '2024-01-02', pnl: 0 },
+      ]
+      const { container } = render(<LineSeriesChart data={flat} yKey="pnl" referenceValue={0} />)
+      const line = container.querySelector('.chart-reference-line')
+      expect(line.getAttribute('y1')).not.toMatch(/NaN/)
+    })
+  })
+
   it('only plots markers whose timestamp matches a bar in the series', () => {
     const { container } = render(
       <LineSeriesChart

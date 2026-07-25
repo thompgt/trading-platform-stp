@@ -17,6 +17,10 @@ export default function LineSeriesChart({
   formatY = (v) => v.toFixed(2),
   markers = [],
   emptyLabel = 'No data yet.',
+  // Draws a dashed baseline (typically 0) and forces the y-domain to include it. Without
+  // this, a P&L series that never goes negative would be drawn as though its own minimum
+  // were breakeven, which reads as a loss that never happened.
+  referenceValue = null,
 }) {
   const svgRef = useRef(null)
   const [hoverIndex, setHoverIndex] = useState(null)
@@ -28,8 +32,8 @@ export default function LineSeriesChart({
       return { points: [], yMin: 0, yMax: 1, plotW, plotH }
     }
     const values = data.map((d) => d[yKey])
-    const yMin = Math.min(...values)
-    const yMax = Math.max(...values)
+    const yMin = referenceValue == null ? Math.min(...values) : Math.min(...values, referenceValue)
+    const yMax = referenceValue == null ? Math.max(...values) : Math.max(...values, referenceValue)
     const range = yMax - yMin || 1
     const points = data.map((d, i) => {
       const x = PAD.left + (data.length === 1 ? 0 : (i / (data.length - 1)) * plotW)
@@ -37,7 +41,7 @@ export default function LineSeriesChart({
       return { x, y, raw: d }
     })
     return { points, yMin, yMax, plotW, plotH }
-  }, [data, yKey])
+  }, [data, yKey, referenceValue])
 
   if (!data || data.length === 0) {
     return <p className="empty-state">{emptyLabel}</p>
@@ -97,6 +101,16 @@ export default function LineSeriesChart({
 
         <path d={areaPath} fill={color} opacity="0.08" stroke="none" />
         <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+
+        {referenceValue != null && (
+          <line
+            x1={PAD.left}
+            x2={WIDTH - PAD.right}
+            y1={PAD.top + plotH - ((referenceValue - yMin) / (yMax - yMin || 1)) * plotH}
+            y2={PAD.top + plotH - ((referenceValue - yMin) / (yMax - yMin || 1)) * plotH}
+            className="chart-reference-line"
+          />
+        )}
 
         {markerPoints.map((m, i) => (
           <circle
