@@ -39,6 +39,7 @@ export async function generateStrategy({ symbol, context = '' }, opts = {}) {
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
     schema: StrategySchema,
+    agent: 'strategy_generation',
     ...opts,
   })
 

@@ -7,6 +7,14 @@ import { computePerformance, inferPeriodsPerYear } from '../analytics/performanc
 import { evaluateRisk } from '../agents/riskEngine.js'
 import { draftComplianceTriage } from '../agents/complianceAgent.js'
 import { LlmValidationError } from '../agents/llmJson.js'
+import {
+  simulationSessionsStarted,
+  simulationSessionsActive,
+  simulationActionsTotal,
+  riskAlertsTotal,
+  complianceDraftsTotal,
+  recordSessionPerformance,
+} from '../metrics/registry.js'
 
 // In-memory session store. Fine for a single-instance demo/paper-trading server; a real
 // deployment would move this to a shared store (workplan.md §8 notes horizontal scaling
@@ -21,6 +29,30 @@ function getSession(id) {
     throw err
   }
   return session
+}
+
+/** Performance summary for a session's current state, with bar size inferred from its bars. */
+function performanceOf({ engine }, state) {
+  return computePerformance({
+    equityCurve: state.equityCurve,
+    trades: state.trades,
+    startingCash: engine.startingCash,
+    periodsPerYear: inferPeriodsPerYear(engine.bars),
+  })
+}
+
+/**
+ * Push the session's current P&L/drawdown/exposure onto the Prometheus gauges after every
+ * control action, so Grafana charts the replay as it happens rather than only when
+ * someone opens the performance endpoint.
+ */
+function publishSessionMetrics(session, state) {
+  try {
+    recordSessionPerformance(session.symbol, performanceOf(session, state))
+  } catch {
+    // Metrics must never break a trading action. A gap in a dashboard is recoverable;
+    // a 500 on /step is not.
+  }
 }
 
 export function simulationRouter(db) {
@@ -44,8 +76,13 @@ export function simulationRouter(db) {
       }
       const engine = new SimulationEngine(bars, { strategy, startingCash })
       const id = randomUUID()
-      sessions.set(id, { engine, symbol: symbol.toUpperCase() })
-      res.json({ sessionId: id, symbol: symbol.toUpperCase(), ...engine.state() })
+      const session = { engine, symbol: symbol.toUpperCase() }
+      sessions.set(id, session)
+      simulationSessionsStarted.inc({ symbol: session.symbol })
+      simulationSessionsActive.set(sessions.size)
+      const state = engine.state()
+      publishSessionMetrics(session, state)
+      res.json({ sessionId: id, symbol: session.symbol, ...state })
     } catch (err) {
       res.status(500).json({ error: err.message })
     }
@@ -62,10 +99,12 @@ export function simulationRouter(db) {
 
   router.post('/:id/step', (req, res) => {
     try {
-      const { engine, symbol } = getSession(req.params.id)
+      const session = getSession(req.params.id)
       const n = Number.isFinite(req.body?.n) ? req.body.n : 1
-      const state = engine.step(n)
-      res.json({ sessionId: req.params.id, symbol, ...state })
+      const state = session.engine.step(n)
+      simulationActionsTotal.inc({ action: 'step' })
+      publishSessionMetrics(session, state)
+      res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }
@@ -73,10 +112,12 @@ export function simulationRouter(db) {
 
   router.post('/:id/rewind', (req, res) => {
     try {
-      const { engine, symbol } = getSession(req.params.id)
+      const session = getSession(req.params.id)
       const n = Number.isFinite(req.body?.n) ? req.body.n : 1
-      const state = engine.rewind(n)
-      res.json({ sessionId: req.params.id, symbol, ...state })
+      const state = session.engine.rewind(n)
+      simulationActionsTotal.inc({ action: 'rewind' })
+      publishSessionMetrics(session, state)
+      res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }
@@ -88,9 +129,11 @@ export function simulationRouter(db) {
       return res.status(400).json({ error: 'date is required' })
     }
     try {
-      const { engine, symbol } = getSession(req.params.id)
-      const state = engine.jumpToDate(date)
-      res.json({ sessionId: req.params.id, symbol, ...state })
+      const session = getSession(req.params.id)
+      const state = session.engine.jumpToDate(date)
+      simulationActionsTotal.inc({ action: 'jump' })
+      publishSessionMetrics(session, state)
+      res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }
@@ -98,9 +141,11 @@ export function simulationRouter(db) {
 
   router.post('/:id/reset', (req, res) => {
     try {
-      const { engine, symbol } = getSession(req.params.id)
-      const state = engine.reset()
-      res.json({ sessionId: req.params.id, symbol, ...state })
+      const session = getSession(req.params.id)
+      const state = session.engine.reset()
+      simulationActionsTotal.inc({ action: 'reset' })
+      publishSessionMetrics(session, state)
+      res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }
@@ -108,16 +153,11 @@ export function simulationRouter(db) {
 
   router.get('/:id/performance', (req, res) => {
     try {
-      const { engine, symbol } = getSession(req.params.id)
-      const state = engine.state()
-      const performance = computePerformance({
-        equityCurve: state.equityCurve,
-        trades: state.trades,
-        startingCash: engine.startingCash,
-        // Inferred from the replayed bars so intraday sessions aren't annualized as daily.
-        periodsPerYear: inferPeriodsPerYear(engine.bars),
-      })
-      res.json({ sessionId: req.params.id, symbol, performance })
+      const session = getSession(req.params.id)
+      const state = session.engine.state()
+      const performance = performanceOf(session, state)
+      recordSessionPerformance(session.symbol, performance)
+      res.json({ sessionId: req.params.id, symbol: session.symbol, performance })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }
@@ -136,6 +176,9 @@ export function simulationRouter(db) {
         startingCash: engine.startingCash,
         equityCurve: state.equityCurve,
       })
+      for (const alert of alerts) {
+        riskAlertsTotal.inc({ severity: alert.severity, agent: alert.agent })
+      }
       res.json({ sessionId: req.params.id, symbol, alerts })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
@@ -147,6 +190,9 @@ export function simulationRouter(db) {
       const { engine, symbol } = getSession(req.params.id)
       const state = engine.state()
       const drafts = await draftComplianceTriage({ symbol, trades: state.trades })
+      for (const draft of drafts) {
+        complianceDraftsTotal.inc({ severity: draft.severity })
+      }
       res.json({ sessionId: req.params.id, symbol, drafts })
     } catch (err) {
       if (err instanceof LlmValidationError) {
@@ -162,9 +208,11 @@ export function simulationRouter(db) {
       return res.status(400).json({ error: `strategy.kind must be one of ${STRATEGY_KINDS.join(', ')}` })
     }
     try {
-      const { engine, symbol } = getSession(req.params.id)
-      const state = engine.setStrategy(strategy)
-      res.json({ sessionId: req.params.id, symbol, ...state })
+      const session = getSession(req.params.id)
+      const state = session.engine.setStrategy(strategy)
+      simulationActionsTotal.inc({ action: 'strategy_change' })
+      publishSessionMetrics(session, state)
+      res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }

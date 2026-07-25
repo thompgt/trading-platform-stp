@@ -29,6 +29,7 @@ export async function answerCopilotQuery({ question, facts }, opts = {}) {
     systemPrompt: SYSTEM_PROMPT,
     userPrompt,
     schema: CopilotAnswerSchema,
+    agent: 'research_copilot',
     ...opts,
   })
 

@@ -82,6 +82,7 @@ export async function draftComplianceTriage({ symbol, trades }, opts = {}) {
       systemPrompt: SYSTEM_PROMPT,
       userPrompt,
       schema: TriageSchema,
+      agent: 'compliance_surveillance',
       ...opts,
     })
     drafts.push({

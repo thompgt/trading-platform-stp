@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { fetchBars, storeBars, loadBars, listCachedSymbols } from '../data/marketData.js'
+import { barsIngestedTotal, marketDataFetchDuration } from '../metrics/registry.js'
 
 export function dataRouter(db) {
   const router = Router()
@@ -18,11 +19,18 @@ export function dataRouter(db) {
     if (!symbol || !period1 || !period2) {
       return res.status(400).json({ error: 'symbol, period1, and period2 are required' })
     }
+    const intervalLabel = interval || '1d'
+    const endTimer = marketDataFetchDuration.startTimer({ interval: intervalLabel })
     try {
       const bars = await fetchBars(symbol, { period1, period2, interval })
+      endTimer({ outcome: 'success' })
       const count = await storeBars(db, bars)
+      barsIngestedTotal.inc({ symbol: symbol.toUpperCase(), interval: intervalLabel }, count)
       res.json({ symbol: symbol.toUpperCase(), storedBars: count })
     } catch (err) {
+      // Recorded too — an upstream that fails slowly is exactly what the latency panel
+      // needs to show.
+      endTimer({ outcome: 'error' })
       res.status(502).json({ error: err.message })
     }
   })

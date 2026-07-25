@@ -1,4 +1,14 @@
 import duckdb from 'duckdb'
+import { duckdbQueryDuration } from '../metrics/registry.js'
+
+/**
+ * First SQL keyword of a statement, used as the Prometheus `operation` label. The full
+ * statement would be unbounded cardinality; the verb is enough to tell a slow read from
+ * a slow write.
+ */
+function operationOf(sql) {
+  return sql.trim().split(/\s+/, 1)[0].toUpperCase() || 'UNKNOWN'
+}
 
 /** Thin promise wrapper around the callback-based `duckdb` driver. */
 export function openDatabase(path) {
@@ -6,14 +16,22 @@ export function openDatabase(path) {
   const conn = db.connect()
 
   function run(sql, ...params) {
+    const end = duckdbQueryDuration.startTimer({ operation: operationOf(sql) })
     return new Promise((resolve, reject) => {
-      conn.run(sql, ...params, (err) => (err ? reject(err) : resolve()))
+      conn.run(sql, ...params, (err) => {
+        end()
+        return err ? reject(err) : resolve()
+      })
     })
   }
 
   function all(sql, ...params) {
+    const end = duckdbQueryDuration.startTimer({ operation: operationOf(sql) })
     return new Promise((resolve, reject) => {
-      conn.all(sql, ...params, (err, rows) => (err ? reject(err) : resolve(rows)))
+      conn.all(sql, ...params, (err, rows) => {
+        end()
+        return err ? reject(err) : resolve(rows)
+      })
     })
   }
 

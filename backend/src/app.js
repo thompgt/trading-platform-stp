@@ -4,13 +4,18 @@ import { dataRouter } from './routes/data.js'
 import { simulationRouter } from './routes/simulation.js'
 import { strategyRouter } from './routes/strategy.js'
 import { copilotRouter } from './routes/copilot.js'
+import { metricsRouter } from './routes/metrics.js'
+import { httpMetricsMiddleware } from './metrics/httpMetrics.js'
 
 export function createApp(db) {
   const app = express()
   app.use(cors())
   app.use(express.json())
+  // Before the routes, so every request — including 404s — is counted.
+  app.use(httpMetricsMiddleware)
 
   app.get('/api/health', (req, res) => res.json({ ok: true }))
+  app.use(metricsRouter())
   app.use('/api/data', dataRouter(db))
   app.use('/api/simulation', simulationRouter(db))
   app.use('/api/strategy', strategyRouter())
