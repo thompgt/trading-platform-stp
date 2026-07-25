@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { loadBars } from '../data/marketData.js'
 import { SimulationEngine } from '../simulation/engine.js'
 import { STRATEGY_KINDS } from '../simulation/strategyRunner.js'
+import { computePerformance, inferPeriodsPerYear } from '../analytics/performance.js'
 import { evaluateRisk } from '../agents/riskEngine.js'
 import { draftComplianceTriage } from '../agents/complianceAgent.js'
 import { LlmValidationError } from '../agents/llmJson.js'
@@ -100,6 +101,23 @@ export function simulationRouter(db) {
       const { engine, symbol } = getSession(req.params.id)
       const state = engine.reset()
       res.json({ sessionId: req.params.id, symbol, ...state })
+    } catch (err) {
+      res.status(err.status ?? 500).json({ error: err.message })
+    }
+  })
+
+  router.get('/:id/performance', (req, res) => {
+    try {
+      const { engine, symbol } = getSession(req.params.id)
+      const state = engine.state()
+      const performance = computePerformance({
+        equityCurve: state.equityCurve,
+        trades: state.trades,
+        startingCash: engine.startingCash,
+        // Inferred from the replayed bars so intraday sessions aren't annualized as daily.
+        periodsPerYear: inferPeriodsPerYear(engine.bars),
+      })
+      res.json({ sessionId: req.params.id, symbol, performance })
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }

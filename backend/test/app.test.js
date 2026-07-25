@@ -112,6 +112,39 @@ describe('API routes', () => {
       expect(Array.isArray(stepped.body.equityCurve)).toBe(true)
     })
 
+    it('GET /:id/performance returns P&L, drawdown, and risk-adjusted metrics', async () => {
+      await storeBars(db, sampleBars('TEST'))
+      const start = await request(app)
+        .post('/api/simulation/start')
+        .send({ symbol: 'TEST', strategy: { kind: 'sma_crossover', params: { fastPeriod: 2, slowPeriod: 5 } } })
+      const { sessionId } = start.body
+      await request(app).post(`/api/simulation/${sessionId}/step`).send({ n: 20 })
+
+      const res = await request(app).get(`/api/simulation/${sessionId}/performance`)
+      expect(res.status).toBe(200)
+      const { performance } = res.body
+      expect(performance.barsElapsed).toBe(20)
+      expect(performance.pnlCurve).toHaveLength(20)
+      expect(performance.drawdownCurve).toHaveLength(20)
+      expect(performance.maxDrawdownPct).toBeGreaterThanOrEqual(0)
+      expect(Number.isFinite(performance.sharpe)).toBe(true)
+      expect(Number.isFinite(performance.totalPnl)).toBe(true)
+    })
+
+    it('GET /:id/performance is neutral before any bars are revealed', async () => {
+      await storeBars(db, sampleBars('TEST'))
+      const start = await request(app).post('/api/simulation/start').send({ symbol: 'TEST' })
+      const res = await request(app).get(`/api/simulation/${start.body.sessionId}/performance`)
+      expect(res.status).toBe(200)
+      expect(res.body.performance.totalPnl).toBe(0)
+      expect(res.body.performance.pnlCurve).toEqual([])
+    })
+
+    it('404s performance for an unknown session id', async () => {
+      const res = await request(app).get('/api/simulation/does-not-exist/performance')
+      expect(res.status).toBe(404)
+    })
+
     it('GET /:id/risk returns rules-based alerts with no LLM involved', async () => {
       await storeBars(db, sampleBars('TEST'))
       const start = await request(app)
