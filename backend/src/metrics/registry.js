@@ -129,6 +129,13 @@ export const riskAlertsTotal = new Counter({
   registers: [register],
 })
 
+export const analyticsSignalsTotal = new Counter({
+  name: 'stp_analytics_signals_total',
+  help: 'Technical-analytics signals generated, by indicator and direction',
+  labelNames: ['indicator', 'direction'],
+  registers: [register],
+})
+
 export const complianceDraftsTotal = new Counter({
   name: 'stp_compliance_drafts_total',
   help: 'Compliance triage drafts produced, by severity (draft-only, never auto-filed)',

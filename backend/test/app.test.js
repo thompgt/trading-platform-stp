@@ -182,6 +182,54 @@ describe('API routes', () => {
     })
   })
 
+  describe('/api/analytics', () => {
+    it('returns an empty result set when nothing is cached', async () => {
+      const res = await request(app).get('/api/analytics/signals')
+      expect(res.status).toBe(200)
+      expect(res.body.signals).toEqual([])
+      expect(res.body.summary.signalCount).toBe(0)
+    })
+
+    it('generates signals across the cached symbols by default', async () => {
+      await storeBars(db, sampleBars('AAA'))
+      await storeBars(db, sampleBars('BBB'))
+
+      const res = await request(app).get('/api/analytics/signals')
+      expect(res.status).toBe(200)
+      expect(res.body.symbols).toEqual(['AAA', 'BBB'])
+      expect(res.body.signals.length).toBeGreaterThan(0)
+      expect(res.body.summary.symbolCount).toBe(2)
+    })
+
+    it('honors an explicit symbol list', async () => {
+      await storeBars(db, sampleBars('AAA'))
+      await storeBars(db, sampleBars('BBB'))
+
+      const res = await request(app).get('/api/analytics/signals?symbols=bbb')
+      expect(res.body.symbols).toEqual(['BBB'])
+      expect(res.body.signals.every((s) => s.symbol === 'BBB')).toBe(true)
+    })
+
+    it('reports the indicators a short series could not support', async () => {
+      await storeBars(db, sampleBars('AAA')) // 20 bars — too few for the 50/200 SMA cross
+      const res = await request(app).get('/api/analytics/signals?symbols=AAA')
+      expect(res.body.skipped.map((s) => s.indicator)).toContain('50/200 SMA')
+    })
+
+    it('returns indicator series aligned with the bars they came from', async () => {
+      await storeBars(db, sampleBars('AAA'))
+      const res = await request(app).get('/api/analytics/indicators/aaa')
+      expect(res.status).toBe(200)
+      expect(res.body.symbol).toBe('AAA')
+      expect(res.body.close).toHaveLength(20)
+      for (const series of Object.values(res.body.indicators)) {
+        expect(series).toHaveLength(20)
+      }
+      // A 20-bar series can't fill a 200-period average — nulls, not a shorter array.
+      expect(res.body.indicators.sma200.every((v) => v === null)).toBe(true)
+    })
+  })
+
   describe('/api/strategy/generate', () => {
     it('requires a symbol', async () => {
       const res = await request(app).post('/api/strategy/generate').send({})
