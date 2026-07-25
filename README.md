@@ -21,6 +21,46 @@ reporting & charting, technical analytics, and paper trading.
   Compliance, and the Reporting copilot/allocation chart are wired to the real backend; the
   rest of the UI is still backed by mock data matching the shapes described in the workplan.
 
+## Screenshots
+
+### Paper Trading — bar-by-bar replay of real market data
+
+Historical bars are fetched into DuckDB and replayed one at a time; you can play, step,
+rewind, or jump to a date and resimulate the strategy from there. Trades are marked on the
+price chart and tracked against an equity curve.
+
+![Paper Trading](./docs/screenshots/paper-trading.png)
+
+### Risk & Compliance — deterministic risk rules + Gen-AI compliance triage
+
+Risk alerts come from deterministic rules (concentration, drawdown, volatility) run against
+a simulated session. Compliance patterns are detected deterministically too; Groq only
+drafts the human-readable triage narrative, clearly labelled `AI DRAFT` and always pending
+human review.
+
+![Risk & Compliance](./docs/screenshots/risk-compliance.png)
+
+### Reporting & Charting — KPIs, exposure charts, and the research copilot
+
+![Reporting & Charting](./docs/screenshots/reporting.png)
+
+### Dashboard
+
+![Dashboard](./docs/screenshots/dashboard.png)
+
+### Agent Activity — the full agent roster and what each one has done
+
+![Agent Activity](./docs/screenshots/agent-activity.png)
+
+### Order Blotter, Portfolio, and Technical Analytics
+
+These three are still mock-data UI ahead of the corresponding backend agents.
+
+| | |
+|---|---|
+| ![Order Blotter](./docs/screenshots/order-blotter.png) | ![Portfolio](./docs/screenshots/portfolio.png) |
+| ![Technical Analytics](./docs/screenshots/analytics.png) | |
+
 ## Running it
 
 Two servers, in separate terminals:
