@@ -170,8 +170,9 @@ series doesn't silently report something called a "50/200 SMA" cross.
 
 ![Technical Analytics](./docs/screenshots/analytics.png)
 
-*Screenshot predates the live wiring — the layout is unchanged, but the rows now come from
-real cached bars rather than the sample data.*
+*Every row above is computed from bars cached in DuckDB — AAPL has enough history for the
+50/200 SMA cross, MSFT and TSLA (105 bars each) don't, so that indicator is listed under
+"Not enough history" with the shortfall rather than emitted against a shorter period.*
 
 ### Order Blotter and Portfolio
 
