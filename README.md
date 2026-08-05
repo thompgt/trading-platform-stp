@@ -8,8 +8,8 @@ reporting & charting, technical analytics, and paper trading.
 
 ![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-5FA04E?style=for-the-badge&logo=nodedotjs&logoColor=white)
-![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
+![Trade Booking](https://img.shields.io/badge/Trade%20Booking-1F6FEB?style=for-the-badge)
+![Trade Lifecycle](https://img.shields.io/badge/Trade%20Lifecycle-0B7261?style=for-the-badge)
 ![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black)
 ![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
 ![Multi-Agent STP](https://img.shields.io/badge/Multi--Agent%20STP-4B32C3?style=for-the-badge)
