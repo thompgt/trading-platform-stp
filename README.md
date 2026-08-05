@@ -4,6 +4,16 @@ A design exercise and working scaffold for a multi-agent, gen-AI-assisted straig
 processing (STP) trading platform covering order execution, portfolio management,
 reporting & charting, technical analytics, and paper trading.
 
+## Tech Stack
+
+![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-5FA04E?style=for-the-badge&logo=nodedotjs&logoColor=white)
+![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black)
+![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
+![Multi-Agent STP](https://img.shields.io/badge/Multi--Agent%20STP-4B32C3?style=for-the-badge)
+
 ## Architecture
 
 What is actually built and running today — the full designed agent roster, including the
