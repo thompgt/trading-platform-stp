@@ -1,4 +1,5 @@
 import { runStrategy } from './strategyRunner.js'
+import { strategyReplayDuration } from '../metrics/registry.js'
 
 /**
  * Replays a fixed series of bars bar-by-bar with a cursor, so the UI can step forward,
@@ -59,9 +60,19 @@ export class SimulationEngine {
 
   state() {
     const visible = this.visibleBars()
-    const result = this.strategy
-      ? runStrategy(this.strategy, visible, { startingCash: this.startingCash })
-      : { trades: [], equityCurve: [], finalCash: this.startingCash, finalPosition: 0 }
+    // Every control action (step, rewind, jump, reset, strategy change) re-runs the whole
+    // strategy from bar zero, so this is the platform's hottest CPU path — time it. The
+    // strategy runner itself stays pure; instrumentation lives at the call site.
+    const endTimer = strategyReplayDuration.startTimer({ kind: this.strategy?.kind ?? 'none' })
+    let result
+    try {
+      result = this.strategy
+        ? runStrategy(this.strategy, visible, { startingCash: this.startingCash })
+        : { trades: [], equityCurve: [], finalCash: this.startingCash, finalPosition: 0 }
+    } finally {
+      // Record even on a throw — a strategy that fails slowly is worth seeing.
+      endTimer()
+    }
 
     return {
       cursor: this.cursor,

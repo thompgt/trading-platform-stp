@@ -80,6 +80,14 @@ export const barsIngestedTotal = new Counter({
   registers: [register],
 })
 
+export const strategyReplayDuration = new Histogram({
+  name: 'stp_strategy_replay_duration_seconds',
+  help: 'Time to re-run a strategy across a session\'s visible bars, by strategy kind',
+  labelNames: ['kind'],
+  buckets: API_BUCKETS,
+  registers: [register],
+})
+
 export const simulationSessionsStarted = new Counter({
   name: 'stp_simulation_sessions_started_total',
   help: 'Paper-trading replay sessions started',
