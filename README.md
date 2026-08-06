@@ -147,11 +147,20 @@ screen (labelled as stale) if the backend goes away.
 ### Grafana — system monitoring and P&L history
 
 The same metrics over time, rather than the current snapshot the in-app page shows. One
-dashboard pairs paper-trading performance (cumulative P&L, drawdown from peak, session
-equity, exposure and trade count, risk alerts) with service health (request rate by route,
-latency quantiles, memory, CPU and event-loop lag, DuckDB query time, and per-agent Groq
-latency and outcomes including schema retries). Stepping a replay in the UI moves the P&L
-panels live.
+dashboard, in four rows:
+
+- **Paper trading performance** — cumulative P&L, drawdown from peak, session equity,
+  exposure and trade count, risk alerts.
+- **Service health** — request rate by route, latency quantiles, memory, CPU and
+  event-loop lag, DuckDB query time, and per-agent Groq latency and outcomes including
+  schema retries.
+- **Replay engine** — strategy replay latency by strategy kind, replay activity (active
+  sessions and the rate of step/rewind/jump/reset/strategy-change actions), and per-symbol
+  return against Sharpe ratio.
+- **Market data, signals & load** — bars ingested into DuckDB, upstream Yahoo Finance
+  fetch latency split by outcome, technical signals by direction, and in-flight requests.
+
+Stepping a replay in the UI moves the P&L panels live.
 
 ![Grafana dashboard](./docs/screenshots/grafana.png)
 
@@ -267,11 +276,16 @@ Prometheus scrapes `host.docker.internal:4000` rather than a Compose service nam
   resident memory, heap and event-loop lag; DuckDB query time by operation; upstream Yahoo
   Finance fetch latency; and per-agent Groq latency and outcomes. Agent outcomes separate
   `validation_failed` (the model never produced schema-valid JSON) from `error` (the API
-  call itself failed), so "Groq is down" and "Groq is rambling" don't look alike.
-- *Trading* — per-symbol equity, cumulative P&L, current and max drawdown, exposure,
-  Sharpe and trade count, republished on every replay action; plus technical-analytics
-  signals counted by indicator and direction. Stepping the simulation in
-  the UI moves the Grafana P&L chart.
+  call itself failed), so "Groq is down" and "Groq is rambling" don't look alike. Also
+  in-flight request concurrency, bars ingested into DuckDB by symbol, and
+  `stp_strategy_replay_duration_seconds` — every replay control action re-runs the
+  strategy from bar zero, so that is the backend's hottest CPU path and is timed by
+  strategy kind.
+- *Trading* — per-symbol equity, cumulative P&L, return, current and max drawdown,
+  exposure, Sharpe and trade count, republished on every replay action; the count of
+  active and started sessions and the replay actions driving them; plus
+  technical-analytics signals counted by indicator and direction. Stepping the simulation
+  in the UI moves the Grafana P&L chart.
 
 HTTP metrics are labelled with the matched **route pattern**, not the raw URL — replay
 paths carry a session UUID, so labelling by URL would mint a new time series per session.
