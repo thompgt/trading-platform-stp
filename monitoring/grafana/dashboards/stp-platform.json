@@ -6,7 +6,7 @@
   "timezone": "browser",
   "editable": true,
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": { "from": "now-30m", "to": "now" },
   "templating": {
@@ -524,6 +524,293 @@
       },
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Replay engine",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 43 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Strategy replay time (p95)",
+      "description": "Every replay control action re-runs the strategy from bar zero, so this is the platform's hottest CPU path. Replay rate is on the right axis.",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 44 },
+      "datasource": { "type": "prometheus", "uid": "stp-prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, kind) (rate(stp_strategy_replay_duration_seconds_bucket[$__rate_interval])))",
+          "refId": "A",
+          "legendFormat": "{{kind}}"
+        },
+        {
+          "expr": "sum by (kind) (rate(stp_strategy_replay_duration_seconds_count[$__rate_interval]))",
+          "refId": "B",
+          "legendFormat": "{{kind}} replays/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 4,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".* replays/s" },
+            "properties": [
+              { "id": "unit", "value": "ops" },
+              { "id": "decimals", "value": 2 },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.lineStyle", "value": { "fill": "dot", "dash": [1, 4] } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Replay activity",
+      "description": "Sessions currently held in memory, with the rate of replay control actions and newly started sessions on the right axis.",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 44 },
+      "datasource": { "type": "prometheus", "uid": "stp-prometheus" },
+      "targets": [
+        {
+          "expr": "stp_simulation_sessions_active",
+          "refId": "A",
+          "legendFormat": "active sessions"
+        },
+        {
+          "expr": "sum by (action) (rate(stp_simulation_actions_total[$__rate_interval]))",
+          "refId": "B",
+          "legendFormat": "{{action}}/s"
+        },
+        {
+          "expr": "sum(rate(stp_simulation_sessions_started_total[$__rate_interval]))",
+          "refId": "C",
+          "legendFormat": "sessions started/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*/s" },
+            "properties": [
+              { "id": "unit", "value": "ops" },
+              { "id": "decimals", "value": 2 },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineStyle", "value": { "fill": "dot", "dash": [1, 4] } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Return & Sharpe",
+      "description": "Cumulative return of each live replay session, with its annualized Sharpe ratio on the right axis.",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 44 },
+      "datasource": { "type": "prometheus", "uid": "stp-prometheus" },
+      "targets": [
+        {
+          "expr": "stp_session_return_pct{symbol=~\"$symbol\"}",
+          "refId": "A",
+          "legendFormat": "{{symbol}} return"
+        },
+        {
+          "expr": "stp_session_sharpe_ratio{symbol=~\"$symbol\"}",
+          "refId": "B",
+          "legendFormat": "{{symbol}} Sharpe"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".* Sharpe" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineStyle", "value": { "fill": "dot", "dash": [1, 4] } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Market data, signals & load",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Bars ingested",
+      "description": "Cumulative market data bars written into DuckDB, by symbol and bar size.",
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "stp-prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (symbol, interval) (stp_bars_ingested_total)",
+          "refId": "A",
+          "legendFormat": "{{symbol}} {{interval}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Upstream fetch latency (p95)",
+      "description": "Yahoo Finance fetch latency by outcome. Cumulative fetch counts sit on the right axis, so a failing upstream still shows up when nothing is in flight.",
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "stp-prometheus" },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, outcome) (rate(stp_market_data_fetch_duration_seconds_bucket[$__rate_interval])))",
+          "refId": "A",
+          "legendFormat": "p95 {{outcome}}"
+        },
+        {
+          "expr": "sum by (outcome) (stp_market_data_fetch_duration_seconds_count)",
+          "refId": "B",
+          "legendFormat": "{{outcome}} fetches"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".* fetches" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "decimals", "value": 0 },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "custom.lineStyle", "value": { "fill": "dot", "dash": [1, 4] } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "error fetches" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Technical signals generated",
+      "description": "Cumulative technical-analytics signals by direction, across every indicator the signals endpoint evaluates.",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "stp-prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (direction) (stp_analytics_signals_total)",
+          "refId": "A",
+          "legendFormat": "{{direction}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "bullish" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "bearish" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "neutral" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests in flight",
+      "description": "HTTP requests being handled concurrently. A rising floor here against flat throughput means requests are queueing.",
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "stp-prometheus" },
+      "targets": [
+        {
+          "expr": "stp_http_requests_in_flight",
+          "refId": "A",
+          "legendFormat": "in flight"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never", "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"] },
         "tooltip": { "mode": "multi", "sort": "desc" }
       }
     }
