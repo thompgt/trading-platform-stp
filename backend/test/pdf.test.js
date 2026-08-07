@@ -8,6 +8,8 @@ import {
   measureText,
   truncate,
   render,
+  pageCount,
+  onPage,
   FONTS,
   PAGE_SIZES,
 } from '../src/posttrade/pdf.js'
@@ -64,6 +66,28 @@ describe('pdf document', () => {
     expect(pdf).toContain('/Count 2')
     expect(pdf).toContain('(page one) Tj')
     expect(pdf).toContain('(page two) Tj')
+  })
+
+  it('draws back onto an earlier page and restores the current one', () => {
+    const doc = createDocument()
+    drawText(doc, 'first', 50, 50)
+    addPage(doc)
+    drawText(doc, 'second', 50, 50)
+
+    expect(pageCount(doc)).toBe(2)
+    onPage(doc, 0, () => drawText(doc, 'stamped on page one', 50, 700))
+    drawText(doc, 'still on page two', 50, 70)
+
+    const pdf = bytes(doc)
+    const firstPageOps = pdf.slice(pdf.indexOf('(first)'), pdf.indexOf('(second)'))
+    expect(firstPageOps).toContain('(stamped on page one)')
+    expect(firstPageOps).not.toContain('(still on page two)')
+    expect(pdf.slice(pdf.indexOf('(second)'))).toContain('(still on page two)')
+  })
+
+  it('refuses to draw on a page that does not exist', () => {
+    const doc = createDocument()
+    expect(() => onPage(doc, 5, () => {})).toThrow(/No such page/)
   })
 
   it('converts top-left coordinates to PDF bottom-left', () => {

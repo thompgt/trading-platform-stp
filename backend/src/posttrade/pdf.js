@@ -31,7 +31,7 @@ export const FONTS = {
 
 /** Open a document. Starts with one blank page. */
 export function createDocument({ size = PAGE_SIZES.LETTER } = {}) {
-  const doc = { width: size.width, height: size.height, pages: [] }
+  const doc = { width: size.width, height: size.height, pages: [], activePage: 0 }
   addPage(doc)
   return doc
 }
@@ -39,11 +39,36 @@ export function createDocument({ size = PAGE_SIZES.LETTER } = {}) {
 /** Start a new page and make it current. */
 export function addPage(doc) {
   doc.pages.push({ ops: [] })
+  doc.activePage = doc.pages.length - 1
   return doc.pages.length
 }
 
+/** Number of pages so far. */
+export function pageCount(doc) {
+  return doc.pages.length
+}
+
+/**
+ * Draw onto an earlier page, then restore the page that was current.
+ *
+ * Needed for anything that can only be written once the document is finished — a "page 2
+ * of 7" footer cannot know the 7 until the last page exists.
+ */
+export function onPage(doc, index, draw) {
+  if (index < 0 || index >= doc.pages.length) {
+    throw new Error(`No such page: ${index}`)
+  }
+  const previous = doc.activePage
+  doc.activePage = index
+  try {
+    draw()
+  } finally {
+    doc.activePage = previous
+  }
+}
+
 function current(doc) {
-  return doc.pages[doc.pages.length - 1]
+  return doc.pages[doc.activePage]
 }
 
 /**
