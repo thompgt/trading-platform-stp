@@ -97,7 +97,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 24 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 25 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -242,7 +242,9 @@ trading-platform-stp/
 ├─ backend/                       Node.js 20+ · Express 5 · ESM
 │  └─ src/
 │     ├─ server.js                entrypoint: env, DuckDB open + schema, listen
-│     ├─ app.js                   createApp(db) — CORS, JSON, metrics middleware, routers
+│     ├─ app.js                   createApp(db, {apiKey, corsOrigins}) — CORS allowlist, JSON,
+│     │                           metrics middleware, API-key auth, routers
+│     ├─ middleware/              auth.js (API key) · rateLimit.js (fixed-window, LLM routes)
 │     ├─ routes/
 │     │  ├─ data.js               GET /symbols · POST /fetch · GET /bars/:symbol
 │     │  ├─ simulation.js         session lifecycle, step/rewind/jump/reset, perf, risk, compliance
@@ -267,7 +269,7 @@ trading-platform-stp/
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
 │     ├─ db/duckdb.js             promise wrapper + `bars` schema
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       24 Vitest suites (Groq mocked — no API key needed)
+│  └─ test/                       25 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -417,9 +419,31 @@ curl -X POST http://localhost:4000/api/data/fetch \
 |---|---|---|---|
 | `GROQ_API_KEY` | `backend/.env` | — | Required only for the gen-AI agents |
 | `GROQ_MODEL` | `backend/.env` | `llama-3.3-70b-versatile` | Groq model id |
+| `API_KEY` | `backend/.env` | generated at boot | Shared key required on every `/api` route |
+| `CORS_ORIGIN` | backend env | `http://localhost:5173` | Comma-separated browser origin allowlist |
 | `PORT` | backend env | `4000` | API + `/metrics` port |
 | `DUCKDB_PATH` | backend env | `./data/market.duckdb` | Bar cache file |
 | `VITE_API_BASE_URL` | `frontend/.env` | `http://localhost:4000/api` | API base the SPA calls |
+| `VITE_API_KEY` | `frontend/.env` | — | Must match the backend's `API_KEY` |
+
+### API authentication
+
+Every route under `/api` requires the shared key, sent as `X-API-Key` or
+`Authorization: Bearer <key>`. `/api/health` and `/metrics` stay open so a liveness probe and
+a Prometheus scrape work uncredentialed.
+
+If `API_KEY` is unset the backend **generates one at boot and prints it** rather than starting
+open — the Groq proxy spends real money and the settlement routes serve full ledgers and
+counterparty settlement instructions, so an unconfigured deployment must not be the exposed
+one. Copy the printed value into `backend/.env` and `frontend/.env` to keep it across restarts.
+
+`CORS_ORIGIN` is an explicit allowlist; a `*` entry is dropped, not honored. The two
+Groq-backed routers (`/api/strategy`, `/api/copilot`) are additionally rate-limited to 20
+requests per key per minute, so a valid key still cannot run up an unbounded bill.
+
+A key embedded in a browser bundle is readable by anyone who loads the page — this closes the
+API to the open internet, not to the SPA's own user. A real deployment would put a per-user
+session in front of it (see `workplan.md` §9).
 
 ### Running on a different port
 
@@ -467,7 +491,7 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 24 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 25 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
 ```
