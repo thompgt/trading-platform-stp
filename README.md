@@ -316,6 +316,9 @@ loads the cached bars (404 if none — it never silently fetches), constructs a
 to 100,000.
 
 **3. Advance the clock.** `POST /:id/step`, `/rewind`, `/jump`, `/reset` move the cursor.
+`/jump` rejects an unparseable date with a 400 rather than treating it as "past the end", and
+reports `jumpedPastLastBar` when a valid date genuinely lands beyond the last bar — a typo and
+a deliberate fast-forward must not look the same.
 The engine reveals `bars[0..cursor)` and **re-runs the entire strategy from bar zero** on every
 action — which is why the replay is exactly reproducible, and also why
 `stp_strategy_replay_duration_seconds` (labelled by strategy kind) is the backend's hottest

@@ -94,6 +94,23 @@ describe('API routes', () => {
       expect(jumped.body.currentBar.close).toBeGreaterThan(0)
     })
 
+    it('400s a jump to an unparseable date rather than fast-forwarding the replay', async () => {
+      await storeBars(db, sampleBars('TEST'))
+      const start = await request(app).post('/api/simulation/start').send({ symbol: 'TEST' })
+      const { sessionId } = start.body
+      await request(app).post(`/api/simulation/${sessionId}/step`).send({ n: 3 })
+
+      const res = await request(app)
+        .post(`/api/simulation/${sessionId}/jump`)
+        .send({ date: 'not-a-date' })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toMatch(/Invalid date/)
+
+      // A typo must not have advanced the session.
+      const state = await request(app).get(`/api/simulation/${sessionId}/state`)
+      expect(state.body.cursor).toBe(3)
+    })
+
     it('404s operating on an unknown session id', async () => {
       const res = await request(app).post('/api/simulation/does-not-exist/step').send({})
       expect(res.status).toBe(404)
