@@ -6,7 +6,7 @@ import { STRATEGY_KINDS } from '../simulation/strategyRunner.js'
 import { computePerformance, inferPeriodsPerYear } from '../analytics/performance.js'
 import { evaluateRisk } from '../agents/riskEngine.js'
 import { draftComplianceTriage } from '../agents/complianceAgent.js'
-import { LlmValidationError } from '../agents/llmJson.js'
+import { LlmValidationError, LlmTimeoutError } from '../agents/llmJson.js'
 import { ExpiringStore } from '../lib/expiringStore.js'
 import {
   simulationSessionsStarted,
@@ -249,6 +249,9 @@ export function simulationRouter(db) {
       }
       res.json({ sessionId: req.params.id, symbol, drafts })
     } catch (err) {
+      if (err instanceof LlmTimeoutError) {
+        return res.status(504).json({ error: err.message, kind: 'llm_timeout' })
+      }
       if (err instanceof LlmValidationError) {
         return res.status(502).json({ error: err.message, kind: 'llm_validation_failed' })
       }

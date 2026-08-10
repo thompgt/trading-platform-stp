@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { generateStrategy } from '../agents/strategyAgent.js'
-import { LlmValidationError } from '../agents/llmJson.js'
+import { LlmValidationError, LlmTimeoutError } from '../agents/llmJson.js'
 
 export function strategyRouter() {
   const router = Router()
@@ -14,6 +14,9 @@ export function strategyRouter() {
       const { strategy, attempts } = await generateStrategy({ symbol, context })
       res.json({ strategy, attempts })
     } catch (err) {
+      if (err instanceof LlmTimeoutError) {
+        return res.status(504).json({ error: err.message, kind: 'llm_timeout' })
+      }
       if (err instanceof LlmValidationError) {
         return res.status(502).json({ error: err.message, kind: 'llm_validation_failed' })
       }
