@@ -12,6 +12,8 @@ compliance surveillance, technical analytics, and full Prometheus/Grafana observ
 ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white)
 
+[![CI](https://github.com/thompgt/trading-platform-stp/actions/workflows/ci.yml/badge.svg)](https://github.com/thompgt/trading-platform-stp/actions/workflows/ci.yml)
+
 ---
 
 ## Why this matters
@@ -292,6 +294,7 @@ trading-platform-stp/
 │     ├─ provisioning/            datasource + dashboard providers (no setup wizard)
 │     └─ dashboards/stp-platform.json
 │
+├─ .github/workflows/ci.yml       lint + test both packages, plus the frontend build
 ├─ docs/screenshots/              UI and Grafana screenshots used below
 └─ workplan.md                    full design doc: agent roster, lifecycle, AWS, roadmap
 ```
@@ -397,7 +400,8 @@ npm install
 npm run dev               # http://localhost:5173 (or the next free port)
 ```
 
-Other frontend scripts: `npm run build`, `npm run preview`, `npm run lint` (oxlint).
+Other frontend scripts: `npm run build`, `npm run preview`, `npm run lint` (oxlint). The
+backend has `npm run lint` too, on the same linter.
 
 The sidebar shows a live **Backend online/offline** indicator, so it's obvious when the API
 isn't running. Paper Trading, Risk & Compliance, Technical Analytics, System Health and the
@@ -500,7 +504,16 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 cd backend  && npm test          # 26 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
+cd backend  && npm run lint      # oxlint
+cd frontend && npm run lint
 ```
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push and pull request, in two parallel jobs on Node
+22: **backend** lint + test, **frontend** lint + test + build. The backend suites need no
+`GROQ_API_KEY` and no network — Groq is mocked and DuckDB runs in-memory — so a test that
+reaches for a real key or a real upstream fails the build rather than passing quietly.
 
 Backend coverage: DuckDB bar storage round-trip, the replay engine (step/rewind/jump-to-date,
 including resimulating from a rewound point), the Groq agents (invalid JSON is retried and, if

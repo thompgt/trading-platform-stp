@@ -1,0 +1,75 @@
+name: CI
+
+# The repo carries ~35 Vitest suites encoding things that must not silently regress — the
+# ledger's double-entry invariants, T+1 settlement dates, integer-cent money, indicator
+# warm-up windows. None of it was running anywhere. This workflow is the gate.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the run in flight.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend — lint and test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Vite 8 needs >= 20.19; 22 LTS is what the README tells contributors to use.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # No GROQ_API_KEY and no network: the suites mock the Groq client, and DuckDB runs
+      # in-memory. A test that needs a real key or a real upstream should fail here.
+      - name: Test
+        run: npm test
+
+  frontend:
+    name: Frontend — lint, test and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      # Build last: a type or import error that neither lint nor jsdom tests reach still
+      # breaks the deployable artifact, so the bundle has to actually come out.
+      - name: Build
+        run: npm run build

@@ -59,7 +59,7 @@ export function createApp(db, { apiKey = null, corsOrigins = DEFAULT_ORIGINS } =
   app.use('/api/settlement', settlementRouter())
 
   // Last-resort handler: never leak stack traces, always return JSON.
-  app.use((err, req, res, next) => {
+  app.use((err, req, res, _next) => {
     console.error(err)
     res.status(err.status ?? 500).json({ error: err.message ?? 'Internal server error' })
   })
