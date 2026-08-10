@@ -31,6 +31,25 @@ function getSession(id) {
   return session
 }
 
+/**
+ * A read-only view of a session's executions, for the post-trade procedure to settle.
+ *
+ * Deliberately narrow: the settlement router gets the fills, the symbol and the opening
+ * cash, and no handle on the engine. Post-trade must never be able to reach back and
+ * change the trading history it is settling — the front office decides what was traded,
+ * the back office decides what it costs and when it pays.
+ */
+export function getSessionExecutions(id) {
+  const session = sessions.get(id)
+  if (!session) return null
+  const state = session.engine.state()
+  return {
+    symbol: session.symbol,
+    startingCash: session.engine.startingCash,
+    fills: state.trades.map(({ ts, side, qty, price }) => ({ ts, side, qty, price })),
+  }
+}
+
 /** Performance summary for a session's current state, with bar size inferred from its bars. */
 function performanceOf({ engine }, state) {
   return computePerformance({

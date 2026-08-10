@@ -97,7 +97,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 12 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 24 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -114,7 +114,7 @@ flowchart TB
 
     subgraph API["Backend — Node.js / Express 5"]
         direction LR
-        Routes["/api/data · /api/simulation<br/>/api/analytics · /api/strategy<br/>/api/copilot · /api/metrics"]
+        Routes["/api/data · /api/simulation<br/>/api/analytics · /api/strategy<br/>/api/copilot · /api/settlement<br/>/api/metrics"]
     end
 
     subgraph Rules["Deterministic agents — reproducible, no model"]
@@ -249,6 +249,7 @@ trading-platform-stp/
 │     │  ├─ analytics.js          GET /signals · GET /indicators/:symbol
 │     │  ├─ strategy.js           POST /generate            (Groq)
 │     │  ├─ copilot.js            POST /ask                 (Groq)
+│     │  ├─ settlement.js         POST /run · GET /runs · GET /:runId[/ledger|/breaks|/report.pdf]
 │     │  └─ metrics.js            GET /metrics (Prom text) · GET /api/metrics/summary (JSON)
 │     ├─ agents/
 │     │  ├─ groqClient.js         lazy Groq SDK client + GROQ_MODEL
@@ -258,11 +259,15 @@ trading-platform-stp/
 │     │  ├─ complianceAgent.js    rules detect patterns → Groq drafts triage narrative
 │     │  └─ riskEngine.js         Pre-Trade / Market Risk  (rules only, no model)
 │     ├─ analytics/               indicators.js · signals.js · performance.js
+│     ├─ posttrade/               procedure.js (5-stage settlement run) · money.js (integer cents)
+│     │                           ledger.js (double-entry) · calendar.js (T+1 NYSE) · matching.js
+│     │                           enrichment.js · settlement.js (DVP) · positions.js
+│     │                           reconciliation.js · report.js · pdf.js · staticData.js
 │     ├─ simulation/              engine.js (cursor replay) · strategyRunner.js (execution)
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
 │     ├─ db/duckdb.js             promise wrapper + `bars` schema
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       12 Vitest suites (Groq mocked — no API key needed)
+│  └─ test/                       24 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -462,7 +467,7 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 12 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 24 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
 ```

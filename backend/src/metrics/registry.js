@@ -151,6 +151,127 @@ export const complianceDraftsTotal = new Counter({
   registers: [register],
 })
 
+// --- Post-trade (middle and back office) ---------------------------------------------
+//
+// The settlement procedure runs unattended, so these are the control: if nobody is
+// watching each stage, the straight-through rate and the break counts are how anyone
+// finds out the automation stopped working. They are deliberately the same metrics an
+// operations manager would ask for — throughput, exceptions, fails, and whether the books
+// balanced — rather than internal counters.
+
+export const settlementRunsTotal = new Counter({
+  name: 'stp_settlement_runs_total',
+  help: 'Settlement procedure runs, by symbol and outcome (clean, exceptions) — a run is clean only when nothing, exception or fail, was left for a human',
+  labelNames: ['symbol', 'outcome'],
+  registers: [register],
+})
+
+export const settlementProcedureDuration = new Histogram({
+  name: 'stp_settlement_procedure_duration_seconds',
+  help: 'Time to run the full post-trade procedure end to end, by symbol',
+  labelNames: ['symbol'],
+  buckets: API_BUCKETS,
+  registers: [register],
+})
+
+export const settlementTradesTotal = new Counter({
+  name: 'stp_settlement_trades_total',
+  help: 'Trades processed by the settlement procedure, by final status (SETTLED, PENDING, FAILED, BLOCKED)',
+  labelNames: ['symbol', 'status'],
+  registers: [register],
+})
+
+export const settlementFailsTotal = new Counter({
+  name: 'stp_settlement_fails_total',
+  help: 'Settlement fails, by the action their age triggered (RETRY, ESCALATE_TO_OPS, BUY_IN)',
+  labelNames: ['symbol', 'action'],
+  registers: [register],
+})
+
+export const settlementBreaksTotal = new Counter({
+  name: 'stp_settlement_breaks_total',
+  help: 'Post-trade exceptions and breaks, by the stage that raised them',
+  labelNames: ['symbol', 'stage'],
+  registers: [register],
+})
+
+export const settlementReportsRenderedTotal = new Counter({
+  name: 'stp_settlement_reports_rendered_total',
+  help: 'Settlement report PDFs rendered',
+  labelNames: ['symbol'],
+  registers: [register],
+})
+
+export const settlementStpRate = new Gauge({
+  name: 'stp_settlement_straight_through_rate_pct',
+  help: 'Share of captured executions that reached settled with no manual touchpoint, in percent',
+  labelNames: ['symbol'],
+  registers: [register],
+})
+
+export const settlementCashBalance = new Gauge({
+  name: 'stp_settlement_closing_cash_usd',
+  help: 'Closing cash balance on the settlement ledger after the last run, in USD',
+  labelNames: ['symbol'],
+  registers: [register],
+})
+
+export const settlementOpenItems = new Gauge({
+  name: 'stp_settlement_open_items',
+  help: 'Items left needing a human after the last run, by kind (exception, fail)',
+  labelNames: ['symbol', 'kind'],
+  registers: [register],
+})
+
+export const settlementBooksInBalance = new Gauge({
+  name: 'stp_settlement_books_in_balance',
+  help: 'Whether the settlement ledger balanced on the last run (1 balanced, 0 not)',
+  labelNames: ['symbol'],
+  registers: [register],
+})
+
+export const settlementReconciled = new Gauge({
+  name: 'stp_settlement_reconciled',
+  help: 'Whether the custodian reconciliation was clean on the last run (1 clean, 0 breaks)',
+  labelNames: ['symbol'],
+  registers: [register],
+})
+
+/**
+ * Mirror a completed settlement run onto the post-trade metrics.
+ *
+ * Counters take the run's increments; gauges take the state it left behind. Both matter:
+ * the counters say how much work flowed, the gauges say what is still open.
+ */
+export function recordSettlementRun(symbol, result) {
+  if (!symbol || !result?.summary) return
+  const { summary } = result
+  const labels = { symbol }
+
+  // "Clean" has to mean the same thing here as it does on the report's sign-off block: no
+  // exceptions *and* no fails. A run whose only problem is an unresolved fail still needs a
+  // human, and a dashboard that called it clean would be the one place the automation lies.
+  const needsHuman = summary.exceptionCount + summary.failsCount > 0
+  settlementRunsTotal.inc({ symbol, outcome: needsHuman ? 'exceptions' : 'clean' })
+
+  for (const trade of result.trades) {
+    settlementTradesTotal.inc({ symbol, status: trade.settlementStatus })
+  }
+  for (const fail of result.fails) {
+    settlementFailsTotal.inc({ symbol, action: fail.action })
+  }
+  for (const exception of result.exceptions) {
+    settlementBreaksTotal.inc({ symbol, stage: exception.stage })
+  }
+
+  settlementStpRate.set(labels, summary.stpRatePct)
+  settlementCashBalance.set(labels, summary.closingCashCents / 100)
+  settlementOpenItems.set({ symbol, kind: 'exception' }, summary.exceptionCount)
+  settlementOpenItems.set({ symbol, kind: 'fail' }, summary.failsCount)
+  settlementBooksInBalance.set(labels, summary.inBalance ? 1 : 0)
+  settlementReconciled.set(labels, summary.reconciled ? 1 : 0)
+}
+
 // --- Live trading gauges, one series per replayed symbol -----------------------------
 
 export const sessionEquity = new Gauge({

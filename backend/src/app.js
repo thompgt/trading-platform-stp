@@ -5,6 +5,7 @@ import { simulationRouter } from './routes/simulation.js'
 import { strategyRouter } from './routes/strategy.js'
 import { copilotRouter } from './routes/copilot.js'
 import { analyticsRouter } from './routes/analytics.js'
+import { settlementRouter } from './routes/settlement.js'
 import { metricsRouter } from './routes/metrics.js'
 import { httpMetricsMiddleware } from './metrics/httpMetrics.js'
 
@@ -22,6 +23,7 @@ export function createApp(db) {
   app.use('/api/strategy', strategyRouter())
   app.use('/api/copilot', copilotRouter())
   app.use('/api/analytics', analyticsRouter(db))
+  app.use('/api/settlement', settlementRouter())
 
   // Last-resort handler: never leak stack traces, always return JSON.
   app.use((err, req, res, next) => {
