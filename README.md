@@ -252,7 +252,8 @@ trading-platform-stp/
 │     │  ├─ analytics.js          GET /signals · GET /indicators/:symbol
 │     │  ├─ strategy.js           POST /generate            (Groq)
 │     │  ├─ copilot.js            POST /ask                 (Groq)
-│     │  ├─ settlement.js         POST /run · GET /runs · GET/DELETE /:runId[/ledger|/breaks|/report.pdf]
+│     │  ├─ settlement.js         POST /run (server-minted runId) · GET /runs
+│     │  │                        GET/DELETE /:runId[/ledger|/breaks|/report.pdf]
 │     │  └─ metrics.js            GET /metrics (Prom text) · GET /api/metrics/summary (JSON)
 │     ├─ agents/
 │     │  ├─ groqClient.js         lazy Groq SDK client + GROQ_MODEL

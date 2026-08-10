@@ -12,6 +12,7 @@
  * by re-posting the same request.
  */
 import { Router } from 'express'
+import { randomUUID } from 'node:crypto'
 import { runSettlementProcedure } from '../posttrade/procedure.js'
 import { renderSettlementReport } from '../posttrade/report.js'
 import { getSessionExecutions } from './simulation.js'
@@ -66,7 +67,6 @@ export function settlementRouter() {
       confirmDiscrepancies = {},
       failedTradeIds = [],
       custodianDiscrepancies = {},
-      runId = null,
     } = req.body ?? {}
 
     let symbol = bodySymbol
@@ -101,7 +101,6 @@ export function settlementRouter() {
         confirmDiscrepancies,
         failedTradeIds,
         custodianDiscrepancies,
-        runId,
       })
     } catch (err) {
       endTimer()
@@ -109,6 +108,16 @@ export function settlementRouter() {
     }
     endTimer()
 
+    // The run id is minted here, never taken from the request. A caller-supplied id let one
+    // request overwrite another's stored report, and even the procedure's own default
+    // (STL-{ticker}-{asOf}) collides for two fill batches on the same symbol and date — so
+    // the readable part is kept and a random suffix makes it unique per run.
+    result.runId = `${result.runId}-${randomUUID().slice(0, 8)}`
+    if (runs.has(result.runId)) {
+      // Not reachable in practice; it is here so a future change that makes ids predictable
+      // fails loudly instead of silently replacing a settlement record.
+      return res.status(409).json({ error: `Settlement run already exists: ${result.runId}` })
+    }
     runs.set(result.runId, { result, sessionId })
     recordSettlementRun(result.symbol, result)
 

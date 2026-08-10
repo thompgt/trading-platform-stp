@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js'
 import { openDatabase, initSchema } from '../src/db/duckdb.js'
 import { storeBars } from '../src/data/marketData.js'
 import { register, resetMetrics } from '../src/metrics/registry.js'
+import { _resetSettlementRunsForTesting } from '../src/routes/settlement.js'
 
 const FILLS = [
   { ts: '2025-03-05T14:30:00.000Z', side: 'BUY', qty: 500, price: 50.25 },
@@ -40,12 +41,17 @@ describe('settlement API', () => {
     // The registry is module-level, so counters would otherwise carry over between cases
     // and turn an exact assertion into a moving target.
     resetMetrics()
+    // The run store is module-level too, and ids are unique per run now, so without this a
+    // later case would see every earlier case's runs in GET /runs.
+    _resetSettlementRunsForTesting()
   })
 
   it('runs the procedure and returns the full result', async () => {
     const res = await request(app).post('/api/settlement/run').send(RUN).expect(200)
 
-    expect(res.body.runId).toBe('STL-AAPL-20250312')
+    // The id is minted server-side: the readable STL-{ticker}-{asOf} stem plus a suffix
+    // that keeps two batches on the same symbol and date from overwriting each other.
+    expect(res.body.runId).toMatch(/^STL-AAPL-20250312-[0-9a-f]{8}$/)
     expect(res.body.summary).toMatchObject({
       capturedCount: 3,
       settledCount: 3,
@@ -91,7 +97,26 @@ describe('settlement API', () => {
     await request(app).post('/api/settlement/run').send(RUN).expect(200)
     const res = await request(app).get('/api/settlement/runs').expect(200)
     expect(res.body.runs).toHaveLength(1)
-    expect(res.body.runs[0]).toMatchObject({ runId: 'STL-AAPL-20250312', symbol: 'AAPL' })
+    expect(res.body.runs[0].runId).toMatch(/^STL-AAPL-20250312-[0-9a-f]{8}$/)
+    expect(res.body.runs[0].symbol).toBe('AAPL')
+  })
+
+  it('mints a fresh id per run and ignores one supplied by the caller', async () => {
+    const first = await request(app).post('/api/settlement/run').send(RUN).expect(200)
+    const second = await request(app)
+      .post('/api/settlement/run')
+      .send({ ...RUN, runId: 'STL-AAPL-20250312' })
+      .expect(200)
+
+    // Same symbol, same date, and one of them asked for a specific id — neither may land on
+    // the other's stored report.
+    expect(second.body.runId).not.toBe(first.body.runId)
+    expect(second.body.runId).not.toBe('STL-AAPL-20250312')
+
+    const listed = await request(app).get('/api/settlement/runs').expect(200)
+    expect(listed.body.runs).toHaveLength(2)
+    await request(app).get(`/api/settlement/${first.body.runId}`).expect(200)
+    await request(app).get(`/api/settlement/${second.body.runId}`).expect(200)
   })
 
   it('404s an unknown run rather than inventing one', async () => {
@@ -109,7 +134,7 @@ describe('settlement API', () => {
       .expect(200)
       .expect('Content-Type', 'application/pdf')
 
-    expect(res.headers['content-disposition']).toContain('STL-AAPL-20250312.pdf')
+    expect(res.headers['content-disposition']).toContain(`${body.runId}.pdf`)
     expect(Buffer.isBuffer(res.body)).toBe(true)
     expect(res.body.toString('latin1', 0, 8)).toBe('%PDF-1.4')
     expect(Number(res.headers['content-length'])).toBe(res.body.length)
@@ -184,7 +209,7 @@ describe('settlement API', () => {
   it('counts a run with breaks separately from a clean one', async () => {
     await request(app)
       .post('/api/settlement/run')
-      .send({ ...RUN, runId: 'STL-MESSY-1', failedTradeIds: ['TRD-AAPL-0001'] })
+      .send({ ...RUN, failedTradeIds: ['TRD-AAPL-0001'] })
       .expect(200)
     const metrics = await register.metrics()
 
