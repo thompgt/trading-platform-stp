@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import { fetchBars, storeBars, loadBars, listCachedSymbols } from '../data/marketData.js'
 import { barsIngestedTotal, marketDataFetchDuration } from '../metrics/registry.js'
+import { validate } from '../middleware/validate.js'
+import { fetchBarsBody } from '../schemas/requests.js'
 
 export function dataRouter(db) {
   const router = Router()
@@ -14,11 +16,8 @@ export function dataRouter(db) {
     }
   })
 
-  router.post('/fetch', async (req, res) => {
-    const { symbol, period1, period2, interval } = req.body ?? {}
-    if (!symbol || !period1 || !period2) {
-      return res.status(400).json({ error: 'symbol, period1, and period2 are required' })
-    }
+  router.post('/fetch', validate(fetchBarsBody), async (req, res) => {
+    const { symbol, period1, period2, interval } = req.body
     const intervalLabel = interval || '1d'
     const endTimer = marketDataFetchDuration.startTimer({ interval: intervalLabel })
     try {

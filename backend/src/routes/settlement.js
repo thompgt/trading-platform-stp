@@ -17,6 +17,8 @@ import { runSettlementProcedure } from '../posttrade/procedure.js'
 import { renderSettlementReport } from '../posttrade/report.js'
 import { getSessionExecutions } from './simulation.js'
 import { ExpiringStore } from '../lib/expiringStore.js'
+import { validate } from '../middleware/validate.js'
+import { settlementRunBody } from '../schemas/requests.js'
 import {
   settlementProcedureDuration,
   settlementReportsRenderedTotal,
@@ -57,7 +59,7 @@ export function settlementRouter() {
    * path either way, which is the point: the paper-trading sandbox settles through exactly
    * the pipeline a live desk would.
    */
-  router.post('/run', (req, res) => {
+  router.post('/run', validate(settlementRunBody), (req, res) => {
     const {
       sessionId = null,
       symbol: bodySymbol,
@@ -67,7 +69,7 @@ export function settlementRouter() {
       confirmDiscrepancies = {},
       failedTradeIds = [],
       custodianDiscrepancies = {},
-    } = req.body ?? {}
+    } = req.body
 
     let symbol = bodySymbol
     let fills = bodyFills

@@ -2,12 +2,18 @@ import { Router } from 'express'
 import { randomUUID } from 'node:crypto'
 import { loadBars } from '../data/marketData.js'
 import { SimulationEngine } from '../simulation/engine.js'
-import { STRATEGY_KINDS } from '../simulation/strategyRunner.js'
 import { computePerformance, inferPeriodsPerYear } from '../analytics/performance.js'
 import { evaluateRisk } from '../agents/riskEngine.js'
 import { draftComplianceTriage } from '../agents/complianceAgent.js'
 import { LlmValidationError, LlmTimeoutError } from '../agents/llmJson.js'
 import { ExpiringStore } from '../lib/expiringStore.js'
+import { validate } from '../middleware/validate.js'
+import {
+  startSessionBody,
+  stepBody,
+  jumpBody,
+  setStrategyBody,
+} from '../schemas/requests.js'
 import {
   simulationSessionsStarted,
   simulationSessionsActive,
@@ -97,14 +103,8 @@ function publishSessionMetrics(session, state) {
 export function simulationRouter(db) {
   const router = Router()
 
-  router.post('/start', async (req, res) => {
-    const { symbol, start, end, strategy, startingCash } = req.body ?? {}
-    if (!symbol) {
-      return res.status(400).json({ error: 'symbol is required' })
-    }
-    if (strategy && !STRATEGY_KINDS.includes(strategy.kind)) {
-      return res.status(400).json({ error: `strategy.kind must be one of ${STRATEGY_KINDS.join(', ')}` })
-    }
+  router.post('/start', validate(startSessionBody), async (req, res) => {
+    const { symbol, start, end, strategy, startingCash } = req.body
 
     try {
       const bars = await loadBars(db, symbol, { start, end })
@@ -151,10 +151,10 @@ export function simulationRouter(db) {
     res.json({ sessionId: req.params.id, deleted: true, activeSessions: sessions.size })
   })
 
-  router.post('/:id/step', (req, res) => {
+  router.post('/:id/step', validate(stepBody), (req, res) => {
     try {
       const session = getSession(req.params.id)
-      const n = Number.isFinite(req.body?.n) ? req.body.n : 1
+      const n = req.body.n ?? 1
       const state = session.engine.step(n)
       simulationActionsTotal.inc({ action: 'step' })
       publishSessionMetrics(session, state)
@@ -164,10 +164,10 @@ export function simulationRouter(db) {
     }
   })
 
-  router.post('/:id/rewind', (req, res) => {
+  router.post('/:id/rewind', validate(stepBody), (req, res) => {
     try {
       const session = getSession(req.params.id)
-      const n = Number.isFinite(req.body?.n) ? req.body.n : 1
+      const n = req.body.n ?? 1
       const state = session.engine.rewind(n)
       simulationActionsTotal.inc({ action: 'rewind' })
       publishSessionMetrics(session, state)
@@ -177,11 +177,8 @@ export function simulationRouter(db) {
     }
   })
 
-  router.post('/:id/jump', (req, res) => {
-    const { date } = req.body ?? {}
-    if (!date) {
-      return res.status(400).json({ error: 'date is required' })
-    }
+  router.post('/:id/jump', validate(jumpBody), (req, res) => {
+    const { date } = req.body
     try {
       const session = getSession(req.params.id)
       const state = session.engine.jumpToDate(date)
@@ -259,11 +256,8 @@ export function simulationRouter(db) {
     }
   })
 
-  router.put('/:id/strategy', (req, res) => {
-    const { strategy } = req.body ?? {}
-    if (!strategy || !STRATEGY_KINDS.includes(strategy.kind)) {
-      return res.status(400).json({ error: `strategy.kind must be one of ${STRATEGY_KINDS.join(', ')}` })
-    }
+  router.put('/:id/strategy', validate(setStrategyBody), (req, res) => {
+    const { strategy } = req.body
     try {
       const session = getSession(req.params.id)
       const state = session.engine.setStrategy(strategy)

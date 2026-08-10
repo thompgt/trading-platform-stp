@@ -80,6 +80,9 @@ README describes what is actually built and running.
 
 **Gen-AI engineering**
 - **Groq** (`llama-3.3-70b-versatile` by default) behind a shared JSON-mode call wrapper
+- **`zod` on both sides of the boundary**: every request body is parsed by a schema in one
+  middleware (`middleware/validate.js`, `schemas/requests.js`) before a handler sees it, and
+  every LLM response is parsed before a caller does
 - **Structured output enforcement with `zod`**: schema-validated on every response, with
   validation errors fed *back* to the model for a bounded retry, and a typed
   `LlmValidationError` if it never converges — unvalidated model output can never reach a
@@ -105,7 +108,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 28 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 29 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -253,6 +256,8 @@ trading-platform-stp/
 │     ├─ app.js                   createApp(db, {apiKey, corsOrigins}) — CORS allowlist, JSON,
 │     │                           metrics middleware, API-key auth, routers
 │     ├─ middleware/              auth.js (API key) · rateLimit.js (fixed-window, LLM routes)
+│     │                           validate.js (zod request bodies)
+│     ├─ schemas/requests.js      every accepted request body, in one place
 │     ├─ lib/expiringStore.js     TTL + LRU map behind the session and settlement stores
 │     ├─ routes/
 │     │  ├─ data.js               GET /symbols · POST /fetch · GET /bars/:symbol
@@ -279,7 +284,7 @@ trading-platform-stp/
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
 │     ├─ db/duckdb.js             promise wrapper + `bars` schema
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       28 Vitest suites (Groq mocked — no API key needed)
+│  └─ test/                       29 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -455,6 +460,17 @@ curl -X POST http://localhost:4000/api/data/fetch \
 | `VITE_API_BASE_URL` | `frontend/.env` | `http://localhost:4000/api` | API base the SPA calls |
 | `VITE_API_KEY` | `frontend/.env` | — | Must match the backend's `API_KEY` |
 
+### Request validation
+
+Every route body is parsed by a zod schema in one middleware before the handler runs, and the
+handler reads the parsed value. A failure returns 400 with `kind: 'invalid_request'`, the
+first problem as `error` and all of them in `details`.
+
+That closes two real holes: `n` on step/rewind must now be a whole number of bars (a
+fractional one used to flow into `bars.slice` and silently truncate), and settlement fills
+must actually look like executions rather than being any array at all. `runId` is absent from
+the settlement schema on purpose — it is minted server-side, so a supplied one is stripped.
+
 ### API authentication
 
 Every route under `/api` requires the shared key, sent as `X-API-Key` or
@@ -520,7 +536,7 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 28 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 29 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
 cd backend  && npm run lint      # oxlint
