@@ -40,12 +40,28 @@ export class SimulationEngine {
     return this.step(-n)
   }
 
-  /** Jump so the bar at/after the given ISO date becomes the current (last revealed) bar. */
+  /**
+   * Jump so the bar at/after the given ISO date becomes the current (last revealed) bar.
+   *
+   * An unparseable date used to be indistinguishable from a date past the last bar: NaN
+   * makes every `>=` false, findIndex returns -1, and the cursor landed on bars.length. A
+   * typo silently fast-forwarded the whole replay and looked like a successful jump. The two
+   * cases are now separated — a bad date throws, running off the end is reported.
+   */
   jumpToDate(isoDate) {
     const target = new Date(isoDate).getTime()
-    let idx = this.bars.findIndex((b) => new Date(b.ts).getTime() >= target)
-    this.cursor = idx === -1 ? this.bars.length : idx + 1
-    return this.state()
+    if (Number.isNaN(target)) {
+      const err = new Error(`Invalid date: ${isoDate}. Expected an ISO date such as 2024-01-10.`)
+      err.status = 400
+      throw err
+    }
+
+    const idx = this.bars.findIndex((b) => new Date(b.ts).getTime() >= target)
+    const pastLastBar = idx === -1
+    this.cursor = pastLastBar ? this.bars.length : idx + 1
+    // Truthful about what happened: the caller asked for a bar that does not exist, and got
+    // the end of the series instead. That is a legitimate outcome, but not a silent one.
+    return { ...this.state(), jumpedPastLastBar: pastLastBar }
   }
 
   reset() {

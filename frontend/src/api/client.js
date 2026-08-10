@@ -1,5 +1,18 @@
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api'
 
+// The backend requires a shared key on every /api route. This is a local-sandbox arrangement:
+// a key shipped in a browser bundle is readable by anyone who loads the page, so it keeps the
+// API closed to the open internet, not to the SPA's own user. A real deployment would put a
+// per-user session in front of this instead.
+const API_KEY = import.meta.env.VITE_API_KEY || ''
+
+function authHeaders(hasBody) {
+  const headers = {}
+  if (hasBody) headers['Content-Type'] = 'application/json'
+  if (API_KEY) headers['X-API-Key'] = API_KEY
+  return Object.keys(headers).length > 0 ? headers : undefined
+}
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message)
@@ -13,7 +26,7 @@ async function request(path, { method = 'GET', body } = {}) {
   try {
     res = await fetch(`${BASE_URL}${path}`, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: authHeaders(Boolean(body)),
       body: body ? JSON.stringify(body) : undefined,
     })
   } catch {

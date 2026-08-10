@@ -1,24 +1,24 @@
 import { Router } from 'express'
 import { fetchBars, storeBars, loadBars, listCachedSymbols } from '../data/marketData.js'
 import { barsIngestedTotal, marketDataFetchDuration } from '../metrics/registry.js'
+import { validate } from '../middleware/validate.js'
+import { fetchBarsBody } from '../schemas/requests.js'
+import { httpError } from '../middleware/errors.js'
 
 export function dataRouter(db) {
   const router = Router()
 
-  router.get('/symbols', async (req, res) => {
+  router.get('/symbols', async (req, res, next) => {
     try {
       const symbols = await listCachedSymbols(db)
       res.json({ symbols })
     } catch (err) {
-      res.status(500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.post('/fetch', async (req, res) => {
-    const { symbol, period1, period2, interval } = req.body ?? {}
-    if (!symbol || !period1 || !period2) {
-      return res.status(400).json({ error: 'symbol, period1, and period2 are required' })
-    }
+  router.post('/fetch', validate(fetchBarsBody), async (req, res, next) => {
+    const { symbol, period1, period2, interval } = req.body
     const intervalLabel = interval || '1d'
     const endTimer = marketDataFetchDuration.startTimer({ interval: intervalLabel })
     try {
@@ -31,11 +31,18 @@ export function dataRouter(db) {
       // Recorded too — an upstream that fails slowly is exactly what the latency panel
       // needs to show.
       endTimer({ outcome: 'error' })
-      res.status(502).json({ error: err.message })
+      // The provider's own message is a URL, a status line or a parse error against its
+      // payload — nothing the caller can act on, and a description of our upstream. Say
+      // which symbol failed and log the rest.
+      next(
+        httpError(502, `Market data provider request failed for ${symbol.toUpperCase()}`, {
+          cause: err,
+        }),
+      )
     }
   })
 
-  router.get('/bars/:symbol', async (req, res) => {
+  router.get('/bars/:symbol', async (req, res, next) => {
     try {
       const bars = await loadBars(db, req.params.symbol, {
         start: req.query.start,
@@ -43,7 +50,7 @@ export function dataRouter(db) {
       })
       res.json({ symbol: req.params.symbol.toUpperCase(), bars })
     } catch (err) {
-      res.status(500).json({ error: err.message })
+      next(err)
     }
   })
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { z } from 'zod'
-import { callGroqForJson, LlmValidationError } from '../src/agents/llmJson.js'
+import { callGroqForJson, LlmValidationError, LlmTimeoutError } from '../src/agents/llmJson.js'
 
 const schema = z.object({ name: z.string(), age: z.number().int().min(0) })
 
@@ -80,5 +80,87 @@ describe('callGroqForJson', () => {
     await expect(
       callGroqForJson({ systemPrompt: 'sys', userPrompt: 'usr', schema, client, maxAttempts: 1 }),
     ).rejects.toBeInstanceOf(LlmValidationError)
+  })
+})
+
+describe('callGroqForJson timeouts', () => {
+  /** A client that honours the abort signal, standing in for a hung upstream. */
+  function hangingClient() {
+    return {
+      chat: {
+        completions: {
+          create: vi.fn(
+            (_body, { signal } = {}) =>
+              new Promise((_resolve, reject) => {
+                signal?.addEventListener('abort', () => reject(signal.reason))
+              }),
+          ),
+        },
+      },
+    }
+  }
+
+  it('aborts a hung request rather than holding the handler open', async () => {
+    const client = hangingClient()
+    await expect(
+      callGroqForJson({
+        systemPrompt: 'sys',
+        userPrompt: 'usr',
+        schema,
+        client,
+        requestTimeoutMs: 30,
+        deadlineMs: 5000,
+      }),
+    ).rejects.toBeInstanceOf(LlmTimeoutError)
+
+    // One attempt, aborted — not three sequential hangs.
+    expect(client.chat.completions.create).toHaveBeenCalledTimes(1)
+  })
+
+  it('passes an abort signal on every attempt', async () => {
+    const client = fakeClient([JSON.stringify({ name: 'Ada', age: 30 })])
+    await callGroqForJson({ systemPrompt: 'sys', userPrompt: 'usr', schema, client })
+    const [, requestOptions] = client.chat.completions.create.mock.calls[0]
+    expect(requestOptions.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('stops at the overall deadline even when each attempt is individually quick', async () => {
+    // Every response is invalid, so the loop would otherwise run all three attempts; each
+    // one burns more than the deadline allows.
+    let calls = 0
+    const client = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => {
+            calls++
+            await new Promise((r) => setTimeout(r, 40))
+            return { choices: [{ message: { content: 'not json' } }] }
+          }),
+        },
+      },
+    }
+
+    await expect(
+      callGroqForJson({
+        systemPrompt: 'sys',
+        userPrompt: 'usr',
+        schema,
+        client,
+        requestTimeoutMs: 5000,
+        deadlineMs: 60,
+      }),
+    ).rejects.toBeInstanceOf(LlmTimeoutError)
+    expect(calls).toBeLessThan(3)
+  })
+
+  it('leaves a genuine transport error as itself, not a timeout', async () => {
+    const client = {
+      chat: {
+        completions: { create: vi.fn(async () => { throw new Error('socket hang up') }) },
+      },
+    }
+    await expect(
+      callGroqForJson({ systemPrompt: 'sys', userPrompt: 'usr', schema, client }),
+    ).rejects.toThrowError(/socket hang up/)
   })
 })

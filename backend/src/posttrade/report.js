@@ -238,7 +238,19 @@ function drawControlSummary(ctx, result) {
       maxWidth: tileWidth - 6,
     })
   })
-  ctx.y += 46
+  ctx.y += 44
+
+  // The rate is not a standalone number: it is the share settled *as at a date*, and
+  // trades whose settlement date has not arrived are pending rather than broken. Printing
+  // the as-of date under the tiles stops the headline being read as a timeless score.
+  drawText(
+    doc,
+    `Straight-through rate measured as at ${summary.stpRateAsOf ?? result.valuationDate ?? 'n/a'}; trades settling after that date are still pending, not exceptions.`,
+    MARGIN,
+    ctx.y + 7,
+    { size: 7, color: MUTED, maxWidth: CONTENT_WIDTH },
+  )
+  ctx.y += 12
 
   // The money, on one line each, in the order an ops reviewer checks them.
   const figures = [

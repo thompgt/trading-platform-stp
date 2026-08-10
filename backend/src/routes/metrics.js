@@ -89,16 +89,16 @@ function sessionsFrom(snapshot) {
 export function metricsRouter() {
   const router = Router()
 
-  router.get('/metrics', async (req, res) => {
+  router.get('/metrics', async (req, res, next) => {
     try {
       res.set('Content-Type', register.contentType)
       res.end(await register.metrics())
     } catch (err) {
-      res.status(500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.get('/api/metrics/summary', async (req, res) => {
+  router.get('/api/metrics/summary', async (req, res, next) => {
     try {
       const snapshot = await register.getMetricsAsJSON()
 
@@ -167,7 +167,7 @@ export function metricsRouter() {
         sessions: sessionsFrom(snapshot),
       })
     } catch (err) {
-      res.status(500).json({ error: err.message })
+      next(err)
     }
   })
 

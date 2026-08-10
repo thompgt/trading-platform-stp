@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["oxc", "import"],
+  "env": {
+    "node": true,
+    "es2024": true
+  },
+  "ignorePatterns": ["node_modules", "data"],
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-await-in-loop": "off",
+    "import/no-duplicates": "error"
+  }
+}

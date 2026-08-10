@@ -1,5 +1,6 @@
 import { Router } from 'express'
-import { loadBars, listCachedSymbols } from '../data/marketData.js'
+import { loadBars, listCachedSymbols, latestBarStamp } from '../data/marketData.js'
+import { ExpiringStore } from '../lib/expiringStore.js'
 import { generateSignals, summarizeSignals } from '../analytics/signals.js'
 import {
   smaSeries,
@@ -13,6 +14,36 @@ import { analyticsSignalsTotal } from '../metrics/registry.js'
 
 /** Cap on how many cached symbols are scanned when the caller doesn't name any. */
 const DEFAULT_SYMBOL_LIMIT = 8
+
+/**
+ * How many bars back the signal generator looks. 500 comfortably covers the longest warm-up
+ * in the library (the 200-period SMA) plus the trend window on top, and it is a fixed cost
+ * per symbol instead of "however much history happens to be cached" — which, unbounded and
+ * multiplied by eight symbols, is what made this the most expensive endpoint in the app.
+ */
+const DEFAULT_LOOKBACK = 500
+const MAX_LOOKBACK = 5000
+
+/**
+ * Signals memoized per (symbol, latest bar, trend length).
+ *
+ * The computation is a pure function of exactly those things, and the page polls, so without
+ * this every poll recomputed every indicator for every symbol from scratch. New bars only
+ * ever arrive at the end, so the latest timestamp and the bar count together are a sound
+ * cache key: any ingest — append or an INSERT OR REPLACE backfill — changes one of them.
+ */
+const signalCache = new ExpiringStore({ ttlMs: 5 * 60 * 1000, maxEntries: 200 })
+
+/** Test-only: drop memoized signals so a case cannot serve another's result. */
+export function _resetSignalCacheForTesting() {
+  signalCache.clear()
+}
+
+function boundedLookback(raw) {
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_LOOKBACK
+  return Math.min(Math.trunc(n), MAX_LOOKBACK)
+}
 
 function parseSymbols(param) {
   if (!param) return null
@@ -40,10 +71,25 @@ export function analyticsRouter(db) {
       }
 
       const trendLength = Number(req.query.trendLength) || 12
+      const lookback = boundedLookback(req.query.lookback)
+
       const results = []
       for (const symbol of symbols) {
-        const bars = await loadBars(db, symbol)
-        results.push(generateSignals(symbol, bars, { trendLength }))
+        const stamp = await latestBarStamp(db, symbol)
+        const cacheKey = stamp
+          ? `${symbol}|${stamp.latest}|${stamp.barCount}|${lookback}|${trendLength}`
+          : null
+
+        const cached = cacheKey ? signalCache.get(cacheKey) : undefined
+        if (cached) {
+          results.push(cached)
+          continue
+        }
+
+        const bars = await loadBars(db, symbol, { limit: lookback })
+        const result = generateSignals(symbol, bars, { trendLength })
+        if (cacheKey) signalCache.set(cacheKey, result)
+        results.push(result)
       }
 
       for (const signal of results.flatMap((r) => r.signals)) {
@@ -52,6 +98,7 @@ export function analyticsRouter(db) {
 
       res.json({
         symbols,
+        lookback,
         results,
         signals: results.flatMap((r) => r.signals),
         skipped: results.flatMap((r) => r.skipped),

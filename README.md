@@ -12,6 +12,8 @@ compliance surveillance, technical analytics, and full Prometheus/Grafana observ
 ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white)
 
+[![CI](https://github.com/thompgt/trading-platform-stp/actions/workflows/ci.yml/badge.svg)](https://github.com/thompgt/trading-platform-stp/actions/workflows/ci.yml)
+
 ---
 
 ## Why this matters
@@ -54,13 +56,17 @@ README describes what is actually built and running.
 
 **Backend / API**
 - Node.js 20+ ESM, **Express 5** with a router-per-domain layout and a JSON-only last-resort
-  error handler (`backend/src/app.js`)
+  error handler that never quotes internals back to a caller
+  (`backend/src/middleware/errors.js`)
 - Dependency-injected app factory (`createApp(db)`) so the whole API is testable in-process
   with **supertest**, no listening socket required
 
 **Data engineering**
 - **DuckDB** as an embedded analytical store; promise wrapper over the callback driver,
   idempotent `INSERT OR REPLACE` upserts keyed on `(symbol, ts)`, schema bootstrap on boot
+- Batched, transactional ingestion — 500 rows per statement inside one transaction, so an
+  intraday range does not queue tens of thousands of sequential writes on the single shared
+  connection, and a failed ingest leaves no partial range behind
 - Third-party market data ingestion from **Yahoo Finance** (`yahoo-finance2`), daily through
   5-minute intraday bars, with BigInt→Number normalization at the boundary
 
@@ -75,10 +81,16 @@ README describes what is actually built and running.
 
 **Gen-AI engineering**
 - **Groq** (`llama-3.3-70b-versatile` by default) behind a shared JSON-mode call wrapper
+- **`zod` on both sides of the boundary**: every request body is parsed by a schema in one
+  middleware (`middleware/validate.js`, `schemas/requests.js`) before a handler sees it, and
+  every LLM response is parsed before a caller does
 - **Structured output enforcement with `zod`**: schema-validated on every response, with
   validation errors fed *back* to the model for a bounded retry, and a typed
   `LlmValidationError` if it never converges — unvalidated model output can never reach a
   caller (`backend/src/agents/llmJson.js`)
+- Bounded upstream calls: a per-request `AbortSignal` plus an overall deadline across retries,
+  surfaced as a typed `LlmTimeoutError` → HTTP 504 and its own Prometheus outcome, kept
+  separate from schema failures because the remedy differs
 - Guardrail design: models propose parameters, never code; patterns are detected by rules and
   only *narrated* by the model; drafts are labelled and marked pending human review
 
@@ -97,7 +109,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 12 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 29 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -114,7 +126,7 @@ flowchart TB
 
     subgraph API["Backend — Node.js / Express 5"]
         direction LR
-        Routes["/api/data · /api/simulation<br/>/api/analytics · /api/strategy<br/>/api/copilot · /api/metrics"]
+        Routes["/api/data · /api/simulation<br/>/api/analytics · /api/strategy<br/>/api/copilot · /api/settlement<br/>/api/metrics"]
     end
 
     subgraph Rules["Deterministic agents — reproducible, no model"]
@@ -242,13 +254,20 @@ trading-platform-stp/
 ├─ backend/                       Node.js 20+ · Express 5 · ESM
 │  └─ src/
 │     ├─ server.js                entrypoint: env, DuckDB open + schema, listen
-│     ├─ app.js                   createApp(db) — CORS, JSON, metrics middleware, routers
+│     ├─ app.js                   createApp(db, {apiKey, corsOrigins}) — CORS allowlist, JSON,
+│     │                           metrics middleware, API-key auth, routers
+│     ├─ middleware/              auth.js (API key) · rateLimit.js (fixed-window, LLM routes)
+│     │                           validate.js (zod request bodies)
+│     ├─ schemas/requests.js      every accepted request body, in one place
+│     ├─ lib/expiringStore.js     TTL + LRU map behind the session and settlement stores
 │     ├─ routes/
 │     │  ├─ data.js               GET /symbols · POST /fetch · GET /bars/:symbol
-│     │  ├─ simulation.js         session lifecycle, step/rewind/jump/reset, perf, risk, compliance
-│     │  ├─ analytics.js          GET /signals · GET /indicators/:symbol
+│     │  ├─ simulation.js         session lifecycle, step/rewind/jump/reset, DELETE, perf, risk, compliance
+│     │  ├─ analytics.js          GET /signals (bounded lookback, memoized) · GET /indicators/:symbol
 │     │  ├─ strategy.js           POST /generate            (Groq)
 │     │  ├─ copilot.js            POST /ask                 (Groq)
+│     │  ├─ settlement.js         POST /run (server-minted runId) · GET /runs
+│     │  │                        GET/DELETE /:runId[/ledger|/breaks|/report.pdf]
 │     │  └─ metrics.js            GET /metrics (Prom text) · GET /api/metrics/summary (JSON)
 │     ├─ agents/
 │     │  ├─ groqClient.js         lazy Groq SDK client + GROQ_MODEL
@@ -258,11 +277,15 @@ trading-platform-stp/
 │     │  ├─ complianceAgent.js    rules detect patterns → Groq drafts triage narrative
 │     │  └─ riskEngine.js         Pre-Trade / Market Risk  (rules only, no model)
 │     ├─ analytics/               indicators.js · signals.js · performance.js
+│     ├─ posttrade/               procedure.js (5-stage settlement run) · money.js (integer cents)
+│     │                           ledger.js (double-entry) · calendar.js (T+1 NYSE) · matching.js
+│     │                           enrichment.js · settlement.js (DVP) · positions.js
+│     │                           reconciliation.js · report.js · pdf.js · staticData.js
 │     ├─ simulation/              engine.js (cursor replay) · strategyRunner.js (execution)
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
 │     ├─ db/duckdb.js             promise wrapper + `bars` schema
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       12 Vitest suites (Groq mocked — no API key needed)
+│  └─ test/                       29 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -283,6 +306,7 @@ trading-platform-stp/
 │     ├─ provisioning/            datasource + dashboard providers (no setup wizard)
 │     └─ dashboards/stp-platform.json
 │
+├─ .github/workflows/ci.yml       lint + test both packages, plus the frontend build
 ├─ docs/screenshots/              UI and Grafana screenshots used below
 └─ workplan.md                    full design doc: agent roster, lifecycle, AWS, roadmap
 ```
@@ -294,7 +318,8 @@ trading-platform-stp/
 A trade's journey through what is actually implemented, end to end.
 
 **1. Ingest.** `POST /api/data/fetch { symbol, period1, period2, interval }` pulls OHLCV bars
-from Yahoo Finance and upserts them into DuckDB's `bars` table. Fetch latency is timed and
+from Yahoo Finance and upserts them into DuckDB's `bars` table, batched 500 rows to a
+statement inside a single transaction. Fetch latency is timed and
 labelled by outcome, so a slow upstream and a failing upstream look different on the
 dashboard; ingested bar counts are counted per symbol and interval.
 
@@ -304,6 +329,9 @@ loads the cached bars (404 if none — it never silently fetches), constructs a
 to 100,000.
 
 **3. Advance the clock.** `POST /:id/step`, `/rewind`, `/jump`, `/reset` move the cursor.
+`/jump` rejects an unparseable date with a 400 rather than treating it as "past the end", and
+reports `jumpedPastLastBar` when a valid date genuinely lands beyond the last bar — a typo and
+a deliberate fast-forward must not look the same.
 The engine reveals `bars[0..cursor)` and **re-runs the entire strategy from bar zero** on every
 action — which is why the replay is exactly reproducible, and also why
 `stp_strategy_replay_duration_seconds` (labelled by strategy kind) is the backend's hottest
@@ -335,8 +363,12 @@ step. The result comes back with `status: 'Pending compliance review'` and an `a
 that says so in the text. No pattern, no LLM call — and the agent never files.
 
 **8. Analyze.** `GET /api/analytics/signals` computes RSI, MACD, the 50/200 SMA cross and
-Bollinger %B over cached bars, each with a direction and a strength normalized so the meter is
-comparable across indicators and symbols. Indicators whose warm-up window exceeds the loaded
+Bollinger %B over the most recent `?lookback=` bars (default 500, capped at 5000 — enough for
+the 200-period warm-up plus the trend window, and a fixed cost per symbol rather than however
+much history happens to be cached). Results are memoized per symbol, latest bar, lookback and
+trend length for five minutes, so the polling page does not recompute every indicator for
+every symbol on every poll. Each signal carries a direction and a strength normalized so the
+meter is comparable across indicators and symbols. Indicators whose warm-up window exceeds the loaded
 history are returned in a separate `skipped[]` with the shortfall, rather than quietly
 recomputed over a shorter period than their name claims.
 
@@ -345,13 +377,16 @@ against `StrategySchema`, range-checked, then runnable by handing it to
 `PUT /api/simulation/:id/strategy`. `POST /api/copilot/ask` answers a natural-language question
 using *only* the facts JSON the caller supplies, returning the fact strings it relied on. Both
 retry on schema failure and raise `LlmValidationError` → HTTP 502 rather than passing
-malformed output downstream.
+malformed output downstream. Every Groq call carries an abort signal
+(`LLM_REQUEST_TIMEOUT_MS`) and the retry loop carries an overall deadline (`LLM_DEADLINE_MS`);
+exceeding either raises `LlmTimeoutError` → HTTP 504, so a hung upstream cannot hold an
+Express handler open.
 
 **10. Observe.** Every step above increments Prometheus metrics. `GET /metrics` serves the
 text exposition format for Prometheus; `GET /api/metrics/summary` serves a JSON rollup that the
 in-app System Health page polls every 5s (keeping the last good reading, labelled stale, if the
-backend disappears). LLM outcomes separate `validation_failed` from `error`, so "Groq is down"
-and "Groq is rambling" don't look alike.
+backend disappears). LLM outcomes separate `timeout`, `validation_failed` and `error`, so
+"Groq is slow", "Groq is rambling" and "Groq is down" don't look alike.
 
 ---
 
@@ -388,7 +423,8 @@ npm install
 npm run dev               # http://localhost:5173 (or the next free port)
 ```
 
-Other frontend scripts: `npm run build`, `npm run preview`, `npm run lint` (oxlint).
+Other frontend scripts: `npm run build`, `npm run preview`, `npm run lint` (oxlint). The
+backend has `npm run lint` too, on the same linter.
 
 The sidebar shows a live **Backend online/offline** indicator, so it's obvious when the API
 isn't running. Paper Trading, Risk & Compliance, Technical Analytics, System Health and the
@@ -412,9 +448,62 @@ curl -X POST http://localhost:4000/api/data/fetch \
 |---|---|---|---|
 | `GROQ_API_KEY` | `backend/.env` | — | Required only for the gen-AI agents |
 | `GROQ_MODEL` | `backend/.env` | `llama-3.3-70b-versatile` | Groq model id |
+| `LLM_REQUEST_TIMEOUT_MS` | backend env | `20000` | Abort a single Groq request past this |
+| `LLM_DEADLINE_MS` | backend env | `45000` | Ceiling on all attempts together → HTTP 504 |
+| `API_KEY` | `backend/.env` | generated at boot | Shared key required on every `/api` route |
+| `CORS_ORIGIN` | backend env | `http://localhost:5173` | Comma-separated browser origin allowlist |
+| `SESSION_TTL_MS` | backend env | `3600000` | Idle time before a replay session is dropped |
+| `MAX_SESSIONS` | backend env | `200` | Hard cap on live replay sessions |
+| `SETTLEMENT_RUN_TTL_MS` | backend env | `21600000` | Idle time before a settlement run is dropped |
+| `MAX_SETTLEMENT_RUNS` | backend env | `100` | Hard cap on stored settlement runs |
 | `PORT` | backend env | `4000` | API + `/metrics` port |
 | `DUCKDB_PATH` | backend env | `./data/market.duckdb` | Bar cache file |
 | `VITE_API_BASE_URL` | `frontend/.env` | `http://localhost:4000/api` | API base the SPA calls |
+| `VITE_API_KEY` | `frontend/.env` | — | Must match the backend's `API_KEY` |
+
+### Request validation
+
+Every route body is parsed by a zod schema in one middleware before the handler runs, and the
+handler reads the parsed value. A failure returns 400 with `kind: 'invalid_request'`, the
+first problem as `error` and all of them in `details`.
+
+That closes two real holes: `n` on step/rewind must now be a whole number of bars (a
+fractional one used to flow into `bars.slice` and silently truncate), and settlement fills
+must actually look like executions rather than being any array at all. `runId` is absent from
+the settlement schema on purpose — it is minted server-side, so a supplied one is stripped.
+
+### Error responses
+
+Routes report failures with `next(err)`; the last-resort handler in
+`backend/src/middleware/errors.js` decides what the client sees. The rule is that a message is
+returned **only when the status is one we chose**: a 4xx raised by our own code (`Unknown
+simulation session: …`, `Invalid date: …`, a rejected body) is worded for the caller and
+passed through, while anything that escaped from DuckDB, the filesystem or a library becomes a
+flat `500 Internal server error`. The real error is always logged with its method, path and
+status, so nothing is lost — it just stops being published to whoever asked.
+
+`kind` still travels with the response where a route sets one (`llm_timeout`,
+`llm_validation_failed`, `invalid_request`), so clients can branch on the class of failure
+without parsing prose.
+
+### API authentication
+
+Every route under `/api` requires the shared key, sent as `X-API-Key` or
+`Authorization: Bearer <key>`. `/api/health` and `/metrics` stay open so a liveness probe and
+a Prometheus scrape work uncredentialed.
+
+If `API_KEY` is unset the backend **generates one at boot and prints it** rather than starting
+open — the Groq proxy spends real money and the settlement routes serve full ledgers and
+counterparty settlement instructions, so an unconfigured deployment must not be the exposed
+one. Copy the printed value into `backend/.env` and `frontend/.env` to keep it across restarts.
+
+`CORS_ORIGIN` is an explicit allowlist; a `*` entry is dropped, not honored. The two
+Groq-backed routers (`/api/strategy`, `/api/copilot`) are additionally rate-limited to 20
+requests per key per minute, so a valid key still cannot run up an unbounded bill.
+
+A key embedded in a browser bundle is readable by anyone who loads the page — this closes the
+API to the open internet, not to the SPA's own user. A real deployment would put a per-user
+session in front of it (see `workplan.md` §9).
 
 ### Running on a different port
 
@@ -462,10 +551,19 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 12 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 29 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
+cd backend  && npm run lint      # oxlint
+cd frontend && npm run lint
 ```
+
+### CI
+
+`.github/workflows/ci.yml` runs on every push and pull request, in two parallel jobs on Node
+22: **backend** lint + test, **frontend** lint + test + build. The backend suites need no
+`GROQ_API_KEY` and no network — Groq is mocked and DuckDB runs in-memory — so a test that
+reaches for a real key or a real upstream fails the build rather than passing quietly.
 
 Backend coverage: DuckDB bar storage round-trip, the replay engine (step/rewind/jump-to-date,
 including resimulating from a rewound point), the Groq agents (invalid JSON is retried and, if
@@ -562,7 +660,12 @@ the corresponding backend agent work.
   5-minute data for the same symbol makes the replay mix granularities. Annualized figures
   detect this and fall back to a daily assumption rather than reporting an inflated Sharpe, but
   the price series itself is still mixed. Use one bar size per symbol.
-- Replay sessions live in an in-memory map in the backend process — they don't survive a
-  restart and won't work across multiple instances.
+- Replay sessions and settlement runs live in in-memory stores in the backend process — they
+  don't survive a restart and won't work across multiple instances. Both are bounded by a TTL
+  and an entry cap (`SESSION_TTL_MS`/`MAX_SESSIONS`,
+  `SETTLEMENT_RUN_TTL_MS`/`MAX_SETTLEMENT_RUNS`) and evict least-recently-used, so an idle
+  session or an old run can disappear; `DELETE /api/simulation/:id` and
+  `DELETE /api/settlement/:runId` release one immediately. A dropped settlement run is
+  recoverable — the procedure is deterministic, so re-posting the same request reproduces it.
 - The Prometheus trading gauges are labelled by symbol only, so two concurrent sessions on the
   same symbol overwrite each other's values.

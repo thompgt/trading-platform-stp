@@ -56,10 +56,27 @@ describe('SimulationEngine', () => {
     expect(engine.state().currentBar.ts.toISOString().slice(0, 10)).toBe('2024-01-06')
   })
 
-  it('jumping past the last bar date reveals everything', () => {
+  it('jumping past the last bar date reveals everything, and says so', () => {
     const engine = new SimulationEngine(makeBars(5))
-    engine.jumpToDate('2099-01-01')
-    expect(engine.state().isAtEnd).toBe(true)
+    const state = engine.jumpToDate('2099-01-01')
+    expect(state.isAtEnd).toBe(true)
+    expect(state.jumpedPastLastBar).toBe(true)
+  })
+
+  it('throws on an unparseable date instead of fast-forwarding to the end', () => {
+    const engine = new SimulationEngine(makeBars(10))
+    engine.step(3)
+
+    for (const bad of ['not-a-date', '2024-13-45', '', 'Jan the fifth']) {
+      expect(() => engine.jumpToDate(bad)).toThrowError(/Invalid date/)
+    }
+    // The failed jump must not have moved the cursor.
+    expect(engine.state().cursor).toBe(3)
+  })
+
+  it('does not flag a successful jump as having run off the end', () => {
+    const engine = new SimulationEngine(makeBars(10))
+    expect(engine.jumpToDate('2024-01-05').jumpedPastLastBar).toBe(false)
   })
 
   it('reset returns to the start so the market can be resimulated from scratch', () => {
