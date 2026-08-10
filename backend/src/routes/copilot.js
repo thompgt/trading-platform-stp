@@ -7,7 +7,7 @@ import { copilotAskBody } from '../schemas/requests.js'
 export function copilotRouter() {
   const router = Router()
 
-  router.post('/ask', validate(copilotAskBody), async (req, res) => {
+  router.post('/ask', validate(copilotAskBody), async (req, res, next) => {
     const { question, facts } = req.body
     try {
       const result = await answerCopilotQuery({ question, facts: facts ?? {} })
@@ -19,7 +19,9 @@ export function copilotRouter() {
       if (err instanceof LlmValidationError) {
         return res.status(502).json({ error: err.message, kind: 'llm_validation_failed' })
       }
-      res.status(400).json({ error: err.message })
+      // Anything not a timeout or a schema failure is ours, not the caller's — a missing
+      // API key, a transport error — so it is a 500 with nothing quoted back.
+      next(err)
     }
   })
 

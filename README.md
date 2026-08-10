@@ -56,7 +56,8 @@ README describes what is actually built and running.
 
 **Backend / API**
 - Node.js 20+ ESM, **Express 5** with a router-per-domain layout and a JSON-only last-resort
-  error handler (`backend/src/app.js`)
+  error handler that never quotes internals back to a caller
+  (`backend/src/middleware/errors.js`)
 - Dependency-injected app factory (`createApp(db)`) so the whole API is testable in-process
   with **supertest**, no listening socket required
 
@@ -470,6 +471,20 @@ That closes two real holes: `n` on step/rewind must now be a whole number of bar
 fractional one used to flow into `bars.slice` and silently truncate), and settlement fills
 must actually look like executions rather than being any array at all. `runId` is absent from
 the settlement schema on purpose — it is minted server-side, so a supplied one is stripped.
+
+### Error responses
+
+Routes report failures with `next(err)`; the last-resort handler in
+`backend/src/middleware/errors.js` decides what the client sees. The rule is that a message is
+returned **only when the status is one we chose**: a 4xx raised by our own code (`Unknown
+simulation session: …`, `Invalid date: …`, a rejected body) is worded for the caller and
+passed through, while anything that escaped from DuckDB, the filesystem or a library becomes a
+flat `500 Internal server error`. The real error is always logged with its method, path and
+status, so nothing is lost — it just stops being published to whoever asked.
+
+`kind` still travels with the response where a route sets one (`llm_timeout`,
+`llm_validation_failed`, `invalid_request`), so clients can branch on the class of failure
+without parsing prose.
 
 ### API authentication
 

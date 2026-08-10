@@ -10,6 +10,7 @@ import { metricsRouter } from './routes/metrics.js'
 import { httpMetricsMiddleware } from './metrics/httpMetrics.js'
 import { apiKeyAuth } from './middleware/auth.js'
 import { rateLimit } from './middleware/rateLimit.js'
+import { errorHandler } from './middleware/errors.js'
 
 /** Origins allowed to call the API when none are configured — the local Vite dev server. */
 const DEFAULT_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
@@ -58,11 +59,9 @@ export function createApp(db, { apiKey = null, corsOrigins = DEFAULT_ORIGINS } =
   app.use('/api/analytics', analyticsRouter(db))
   app.use('/api/settlement', settlementRouter())
 
-  // Last-resort handler: never leak stack traces, always return JSON.
-  app.use((err, req, res, _next) => {
-    console.error(err)
-    res.status(err.status ?? 500).json({ error: err.message ?? 'Internal server error' })
-  })
+  // Last-resort handler: never leak stack traces or internals, always return JSON. Routes
+  // reach it with next(err) rather than writing their own catch-block response.
+  app.use(errorHandler())
 
   return app
 }

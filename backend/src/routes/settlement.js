@@ -19,6 +19,7 @@ import { getSessionExecutions } from './simulation.js'
 import { ExpiringStore } from '../lib/expiringStore.js'
 import { validate } from '../middleware/validate.js'
 import { settlementRunBody } from '../schemas/requests.js'
+import { badRequest } from '../middleware/errors.js'
 import {
   settlementProcedureDuration,
   settlementReportsRenderedTotal,
@@ -59,7 +60,7 @@ export function settlementRouter() {
    * path either way, which is the point: the paper-trading sandbox settles through exactly
    * the pipeline a live desk would.
    */
-  router.post('/run', validate(settlementRunBody), (req, res) => {
+  router.post('/run', validate(settlementRunBody), (req, res, next) => {
     const {
       sessionId = null,
       symbol: bodySymbol,
@@ -106,7 +107,10 @@ export function settlementRouter() {
       })
     } catch (err) {
       endTimer()
-      return res.status(400).json({ error: err.message })
+      // The procedure only throws on inputs it will not accept, with wording written for
+      // the caller ('runSettlementProcedure requires a symbol'), so the message is passed
+      // through deliberately as a 400 rather than reflected raw off whatever was thrown.
+      return next(badRequest(err.message, { cause: err }))
     }
     endTimer()
 
@@ -140,16 +144,16 @@ export function settlementRouter() {
     })
   })
 
-  router.get('/:runId', (req, res) => {
+  router.get('/:runId', (req, res, next) => {
     try {
       res.json(getRun(req.params.runId).result)
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
   /** The cash ledger, trial balance and account balances — the accounting view. */
-  router.get('/:runId/ledger', (req, res) => {
+  router.get('/:runId/ledger', (req, res, next) => {
     try {
       const { result } = getRun(req.params.runId)
       res.json({
@@ -163,12 +167,12 @@ export function settlementRouter() {
         positions: result.positions,
       })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
   /** Everything a human has to look at, in one place — the ops queue. */
-  router.get('/:runId/breaks', (req, res) => {
+  router.get('/:runId/breaks', (req, res, next) => {
     try {
       const { result } = getRun(req.params.runId)
       res.json({
@@ -182,12 +186,12 @@ export function settlementRouter() {
         },
       })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
   /** The settlement report as a PDF. */
-  router.get('/:runId/report.pdf', (req, res) => {
+  router.get('/:runId/report.pdf', (req, res, next) => {
     try {
       const { result } = getRun(req.params.runId)
       const pdf = renderSettlementReport(result)
@@ -199,7 +203,7 @@ export function settlementRouter() {
       res.setHeader('Content-Disposition', `inline; filename="${result.runId}.pdf"`)
       res.send(pdf)
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 

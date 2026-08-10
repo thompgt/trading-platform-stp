@@ -103,7 +103,7 @@ function publishSessionMetrics(session, state) {
 export function simulationRouter(db) {
   const router = Router()
 
-  router.post('/start', validate(startSessionBody), async (req, res) => {
+  router.post('/start', validate(startSessionBody), async (req, res, next) => {
     const { symbol, start, end, strategy, startingCash } = req.body
 
     try {
@@ -123,16 +123,16 @@ export function simulationRouter(db) {
       publishSessionMetrics(session, state)
       res.json({ sessionId: id, symbol: session.symbol, ...state })
     } catch (err) {
-      res.status(500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.get('/:id/state', (req, res) => {
+  router.get('/:id/state', (req, res, next) => {
     try {
       const { engine, symbol } = getSession(req.params.id)
       res.json({ sessionId: req.params.id, symbol, ...engine.state() })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
@@ -151,7 +151,7 @@ export function simulationRouter(db) {
     res.json({ sessionId: req.params.id, deleted: true, activeSessions: sessions.size })
   })
 
-  router.post('/:id/step', validate(stepBody), (req, res) => {
+  router.post('/:id/step', validate(stepBody), (req, res, next) => {
     try {
       const session = getSession(req.params.id)
       const n = req.body.n ?? 1
@@ -160,11 +160,11 @@ export function simulationRouter(db) {
       publishSessionMetrics(session, state)
       res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.post('/:id/rewind', validate(stepBody), (req, res) => {
+  router.post('/:id/rewind', validate(stepBody), (req, res, next) => {
     try {
       const session = getSession(req.params.id)
       const n = req.body.n ?? 1
@@ -173,11 +173,11 @@ export function simulationRouter(db) {
       publishSessionMetrics(session, state)
       res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.post('/:id/jump', validate(jumpBody), (req, res) => {
+  router.post('/:id/jump', validate(jumpBody), (req, res, next) => {
     const { date } = req.body
     try {
       const session = getSession(req.params.id)
@@ -186,11 +186,11 @@ export function simulationRouter(db) {
       publishSessionMetrics(session, state)
       res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.post('/:id/reset', (req, res) => {
+  router.post('/:id/reset', (req, res, next) => {
     try {
       const session = getSession(req.params.id)
       const state = session.engine.reset()
@@ -198,11 +198,11 @@ export function simulationRouter(db) {
       publishSessionMetrics(session, state)
       res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.get('/:id/performance', (req, res) => {
+  router.get('/:id/performance', (req, res, next) => {
     try {
       const session = getSession(req.params.id)
       const state = session.engine.state()
@@ -210,11 +210,11 @@ export function simulationRouter(db) {
       recordSessionPerformance(session.symbol, performance)
       res.json({ sessionId: req.params.id, symbol: session.symbol, performance })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.get('/:id/risk', (req, res) => {
+  router.get('/:id/risk', (req, res, next) => {
     try {
       const { engine, symbol } = getSession(req.params.id)
       const state = engine.state()
@@ -232,11 +232,11 @@ export function simulationRouter(db) {
       }
       res.json({ sessionId: req.params.id, symbol, alerts })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.get('/:id/compliance', async (req, res) => {
+  router.get('/:id/compliance', async (req, res, next) => {
     try {
       const { engine, symbol } = getSession(req.params.id)
       const state = engine.state()
@@ -252,11 +252,11 @@ export function simulationRouter(db) {
       if (err instanceof LlmValidationError) {
         return res.status(502).json({ error: err.message, kind: 'llm_validation_failed' })
       }
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
-  router.put('/:id/strategy', validate(setStrategyBody), (req, res) => {
+  router.put('/:id/strategy', validate(setStrategyBody), (req, res, next) => {
     const { strategy } = req.body
     try {
       const session = getSession(req.params.id)
@@ -265,7 +265,7 @@ export function simulationRouter(db) {
       publishSessionMetrics(session, state)
       res.json({ sessionId: req.params.id, symbol: session.symbol, ...state })
     } catch (err) {
-      res.status(err.status ?? 500).json({ error: err.message })
+      next(err)
     }
   })
 
