@@ -81,6 +81,9 @@ README describes what is actually built and running.
   validation errors fed *back* to the model for a bounded retry, and a typed
   `LlmValidationError` if it never converges — unvalidated model output can never reach a
   caller (`backend/src/agents/llmJson.js`)
+- Bounded upstream calls: a per-request `AbortSignal` plus an overall deadline across retries,
+  surfaced as a typed `LlmTimeoutError` → HTTP 504 and its own Prometheus outcome, kept
+  separate from schema failures because the remedy differs
 - Guardrail design: models propose parameters, never code; patterns are detected by rules and
   only *narrated* by the model; drafts are labelled and marked pending human review
 
@@ -360,13 +363,16 @@ against `StrategySchema`, range-checked, then runnable by handing it to
 `PUT /api/simulation/:id/strategy`. `POST /api/copilot/ask` answers a natural-language question
 using *only* the facts JSON the caller supplies, returning the fact strings it relied on. Both
 retry on schema failure and raise `LlmValidationError` → HTTP 502 rather than passing
-malformed output downstream.
+malformed output downstream. Every Groq call carries an abort signal
+(`LLM_REQUEST_TIMEOUT_MS`) and the retry loop carries an overall deadline (`LLM_DEADLINE_MS`);
+exceeding either raises `LlmTimeoutError` → HTTP 504, so a hung upstream cannot hold an
+Express handler open.
 
 **10. Observe.** Every step above increments Prometheus metrics. `GET /metrics` serves the
 text exposition format for Prometheus; `GET /api/metrics/summary` serves a JSON rollup that the
 in-app System Health page polls every 5s (keeping the last good reading, labelled stale, if the
-backend disappears). LLM outcomes separate `validation_failed` from `error`, so "Groq is down"
-and "Groq is rambling" don't look alike.
+backend disappears). LLM outcomes separate `timeout`, `validation_failed` and `error`, so
+"Groq is slow", "Groq is rambling" and "Groq is down" don't look alike.
 
 ---
 
@@ -428,6 +434,8 @@ curl -X POST http://localhost:4000/api/data/fetch \
 |---|---|---|---|
 | `GROQ_API_KEY` | `backend/.env` | — | Required only for the gen-AI agents |
 | `GROQ_MODEL` | `backend/.env` | `llama-3.3-70b-versatile` | Groq model id |
+| `LLM_REQUEST_TIMEOUT_MS` | backend env | `20000` | Abort a single Groq request past this |
+| `LLM_DEADLINE_MS` | backend env | `45000` | Ceiling on all attempts together → HTTP 504 |
 | `API_KEY` | `backend/.env` | generated at boot | Shared key required on every `/api` route |
 | `CORS_ORIGIN` | backend env | `http://localhost:5173` | Comma-separated browser origin allowlist |
 | `SESSION_TTL_MS` | backend env | `3600000` | Idle time before a replay session is dropped |
