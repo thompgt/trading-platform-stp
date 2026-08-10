@@ -85,6 +85,25 @@ describe('runSettlementProcedure', () => {
     expect(run({ runId: 'CUSTOM-1' }).runId).toBe('CUSTOM-1')
   })
 
+  it('values as at the report date, not the batch\'s own latest settlement date', () => {
+    // Left to itself, settleTrades values at the latest settlement date in the batch, which
+    // marks every trade due and pins the rate at 100% whenever it is run. The procedure
+    // must instead value as at the caller's today.
+    const result = run({ valuationDate: undefined, generatedAt: '2025-03-06T22:00:00.000Z' })
+    expect(result.valuationDate).toBe('2025-03-06')
+    expect(result.summary.stpRateAsOf).toBe('2025-03-06')
+    expect(result.summary.settledCount).toBe(1)
+    expect(result.summary.pendingCount).toBe(2)
+    expect(result.summary.stpRatePct).toBeLessThan(100)
+  })
+
+  it('keeps the defaulted valuation date reproducible for a given generatedAt', () => {
+    const once = run({ valuationDate: undefined })
+    const twice = run({ valuationDate: undefined })
+    expect(once).toEqual(twice)
+    expect(once.valuationDate).toBe('2025-03-12')
+  })
+
   it('leaves later trades pending when the valuation date is early', () => {
     const result = run({ valuationDate: '2025-03-06' })
     expect(result.summary.settledCount).toBe(1)

@@ -35,6 +35,7 @@ import { settleTrades, DEFAULT_FAILS_POLICY } from './settlement.js'
 import { buildCustodianStatement } from './custodianFeed.js'
 import { reconcile } from './reconciliation.js'
 import { sumCents, toCents } from './money.js'
+import { isoDate } from './calendar.js'
 import { FIRM, BASE_CURRENCY, DEFAULT_COUNTERPARTY_ID } from './staticData.js'
 
 /**
@@ -67,6 +68,16 @@ export function runSettlementProcedure(options = {}) {
   if (!symbol) {
     throw new Error('runSettlementProcedure requires a symbol')
   }
+
+  // The valuation date decides which trades are *due* and therefore what the
+  // straight-through rate is measured against. `settleTrades` defaults it to the latest
+  // settlement date in the batch, which is a reasonable convenience for a replay but a
+  // dishonest default for a control report: it marks every trade due, so nothing can be
+  // pending and the headline rate is measured against a date chosen to flatter it. Default
+  // instead to the caller's own today, taken from the report timestamp rather than a fresh
+  // clock read so the run stays reproducible — pass `generatedAt` and the whole report,
+  // valuation date included, is a pure function of the inputs.
+  const asOfDate = valuationDate ?? isoDate(generatedAt)
 
   const ticker = String(symbol).toUpperCase()
   const stages = []
@@ -118,7 +129,7 @@ export function runSettlementProcedure(options = {}) {
   const settlement = settleTrades(matching.trades, {
     ledger,
     book,
-    valuationDate,
+    valuationDate: asOfDate,
     failedTradeIds,
     failsPolicy,
   })
@@ -155,6 +166,7 @@ export function runSettlementProcedure(options = {}) {
 
   const tb = trialBalance(ledger)
   const summary = buildSummary({
+    asOf,
     fills,
     trades: settlement.trades,
     fails: settlement.fails,
@@ -195,7 +207,7 @@ export function runSettlementProcedure(options = {}) {
   }
 }
 
-function buildSummary({ fills, trades, fails, exceptions, ledger, tb, recon }) {
+function buildSummary({ asOf, fills, trades, fails, exceptions, ledger, tb, recon }) {
   const byStatus = (status) => trades.filter((t) => t.settlementStatus === status).length
   const settled = trades.filter((t) => t.settlementStatus === 'SETTLED')
 
@@ -211,8 +223,11 @@ function buildSummary({ fills, trades, fails, exceptions, ledger, tb, recon }) {
     failedCount: byStatus('FAILED'),
     blockedCount: byStatus('BLOCKED'),
     // The headline control metric: the share of captured executions that reached settled
-    // with no human touchpoint anywhere in the chain.
+    // with no human touchpoint anywhere in the chain. It is only meaningful next to the
+    // date it was measured on — a trade that has not reached its settlement date yet is
+    // pending, not a straight-through failure — so the as-of date travels with it.
     stpRatePct: capturedCount === 0 ? 0 : (settledCount / capturedCount) * 100,
+    stpRateAsOf: asOf ?? null,
     grossCents: sumCents(settled.map((t) => t.grossCents)),
     feesCents: sumCents(settled.map((t) => t.totalFeesCents)),
     // Net movement of actual cash: what came in on sales less what went out on purchases.
