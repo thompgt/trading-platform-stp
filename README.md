@@ -105,7 +105,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 27 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 28 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -257,7 +257,7 @@ trading-platform-stp/
 │     ├─ routes/
 │     │  ├─ data.js               GET /symbols · POST /fetch · GET /bars/:symbol
 │     │  ├─ simulation.js         session lifecycle, step/rewind/jump/reset, DELETE, perf, risk, compliance
-│     │  ├─ analytics.js          GET /signals · GET /indicators/:symbol
+│     │  ├─ analytics.js          GET /signals (bounded lookback, memoized) · GET /indicators/:symbol
 │     │  ├─ strategy.js           POST /generate            (Groq)
 │     │  ├─ copilot.js            POST /ask                 (Groq)
 │     │  ├─ settlement.js         POST /run (server-minted runId) · GET /runs
@@ -279,7 +279,7 @@ trading-platform-stp/
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
 │     ├─ db/duckdb.js             promise wrapper + `bars` schema
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       27 Vitest suites (Groq mocked — no API key needed)
+│  └─ test/                       28 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -357,8 +357,12 @@ step. The result comes back with `status: 'Pending compliance review'` and an `a
 that says so in the text. No pattern, no LLM call — and the agent never files.
 
 **8. Analyze.** `GET /api/analytics/signals` computes RSI, MACD, the 50/200 SMA cross and
-Bollinger %B over cached bars, each with a direction and a strength normalized so the meter is
-comparable across indicators and symbols. Indicators whose warm-up window exceeds the loaded
+Bollinger %B over the most recent `?lookback=` bars (default 500, capped at 5000 — enough for
+the 200-period warm-up plus the trend window, and a fixed cost per symbol rather than however
+much history happens to be cached). Results are memoized per symbol, latest bar, lookback and
+trend length for five minutes, so the polling page does not recompute every indicator for
+every symbol on every poll. Each signal carries a direction and a strength normalized so the
+meter is comparable across indicators and symbols. Indicators whose warm-up window exceeds the loaded
 history are returned in a separate `skipped[]` with the shortfall, rather than quietly
 recomputed over a shorter period than their name claims.
 
@@ -516,7 +520,7 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 27 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 28 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
 cd backend  && npm run lint      # oxlint

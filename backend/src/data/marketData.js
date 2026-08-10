@@ -80,8 +80,14 @@ export async function storeBars(db, bars) {
   return bars.length
 }
 
-/** Load stored bars for a symbol/date range, ordered oldest to newest. */
-export async function loadBars(db, symbol, { start, end } = {}) {
+/**
+ * Load stored bars for a symbol/date range, ordered oldest to newest.
+ *
+ * `limit` takes the *most recent* N bars in the range, not the first N — a bounded lookback
+ * is always "the last N bars", and taking them off the front would silently analyse ancient
+ * history. The rows still come back oldest-first, because every indicator expects that.
+ */
+export async function loadBars(db, symbol, { start, end, limit = null } = {}) {
   const conditions = ['symbol = ?']
   const params = [symbol.toUpperCase()]
 
@@ -94,14 +100,35 @@ export async function loadBars(db, symbol, { start, end } = {}) {
     params.push(new Date(end))
   }
 
-  const rows = await db.all(
-    `SELECT symbol, ts, open, high, low, close, volume FROM bars
-     WHERE ${conditions.join(' AND ')}
-     ORDER BY ts ASC`,
-    ...params,
-  )
+  const where = conditions.join(' AND ')
+  const sql =
+    limit && Number.isInteger(limit) && limit > 0
+      ? `SELECT * FROM (
+           SELECT symbol, ts, open, high, low, close, volume FROM bars
+           WHERE ${where}
+           ORDER BY ts DESC
+           LIMIT ${limit}
+         ) ORDER BY ts ASC`
+      : `SELECT symbol, ts, open, high, low, close, volume FROM bars
+         WHERE ${where}
+         ORDER BY ts ASC`
+
+  const rows = await db.all(sql, ...params)
   // DuckDB returns BIGINT columns as JS BigInt, which JSON.stringify can't serialize.
   return rows.map((r) => ({ ...r, volume: Number(r.volume) }))
+}
+
+/**
+ * Latest stored timestamp and bar count per symbol — a cheap cache key for anything derived
+ * from a symbol's bars, since new data only ever arrives at the end.
+ */
+export async function latestBarStamp(db, symbol) {
+  const [row] = await db.all(
+    `SELECT MAX(ts) AS latest, COUNT(*) AS bar_count FROM bars WHERE symbol = ?`,
+    symbol.toUpperCase(),
+  )
+  if (!row?.latest) return null
+  return { latest: new Date(row.latest).toISOString(), barCount: Number(row.bar_count) }
 }
 
 /** List distinct symbols currently cached, with their stored date range and bar count. */
