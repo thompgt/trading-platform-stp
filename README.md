@@ -63,6 +63,9 @@ README describes what is actually built and running.
 **Data engineering**
 - **DuckDB** as an embedded analytical store; promise wrapper over the callback driver,
   idempotent `INSERT OR REPLACE` upserts keyed on `(symbol, ts)`, schema bootstrap on boot
+- Batched, transactional ingestion — 500 rows per statement inside one transaction, so an
+  intraday range does not queue tens of thousands of sequential writes on the single shared
+  connection, and a failed ingest leaves no partial range behind
 - Third-party market data ingestion from **Yahoo Finance** (`yahoo-finance2`), daily through
   5-minute intraday bars, with BigInt→Number normalization at the boundary
 
@@ -102,7 +105,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 26 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 27 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -276,7 +279,7 @@ trading-platform-stp/
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
 │     ├─ db/duckdb.js             promise wrapper + `bars` schema
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       26 Vitest suites (Groq mocked — no API key needed)
+│  └─ test/                       27 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -309,7 +312,8 @@ trading-platform-stp/
 A trade's journey through what is actually implemented, end to end.
 
 **1. Ingest.** `POST /api/data/fetch { symbol, period1, period2, interval }` pulls OHLCV bars
-from Yahoo Finance and upserts them into DuckDB's `bars` table. Fetch latency is timed and
+from Yahoo Finance and upserts them into DuckDB's `bars` table, batched 500 rows to a
+statement inside a single transaction. Fetch latency is timed and
 labelled by outcome, so a slow upstream and a failing upstream look different on the
 dashboard; ingested bar counts are counted per symbol and interval.
 
@@ -512,7 +516,7 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 26 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 27 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
 cd backend  && npm run lint      # oxlint

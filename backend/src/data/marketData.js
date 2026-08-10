@@ -31,21 +31,52 @@ export async function fetchBars(symbol, { period1, period2, interval = '1d' } = 
   }))
 }
 
-/** Upsert bars into the `bars` DuckDB table, keyed on (symbol, ts). */
+// Rows per INSERT statement. A year of daily bars is one statement; a year of 5-minute bars
+// is a few hundred rather than tens of thousands. Kept well under any parameter ceiling at
+// seven placeholders per row.
+const INSERT_CHUNK_SIZE = 500
+
+/**
+ * Upsert bars into the `bars` DuckDB table, keyed on (symbol, ts).
+ *
+ * Batched and wrapped in a transaction. This used to be one awaited round-trip per row, and
+ * every one of them queued on the single shared DuckDB connection — ingesting an intraday
+ * range meant tens of thousands of sequential statements that blocked every other query in
+ * the process, including the ones serving the replay UI.
+ *
+ * The transaction is also a correctness gain: an ingest that fails halfway now leaves no
+ * partial range behind, so a retry starts from a known state.
+ */
 export async function storeBars(db, bars) {
-  for (const bar of bars) {
-    await db.run(
-      `INSERT OR REPLACE INTO bars (symbol, ts, open, high, low, close, volume)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      bar.symbol,
-      bar.ts,
-      bar.open,
-      bar.high,
-      bar.low,
-      bar.close,
-      bar.volume,
-    )
+  if (bars.length === 0) return 0
+
+  await db.run('BEGIN TRANSACTION')
+  try {
+    for (let i = 0; i < bars.length; i += INSERT_CHUNK_SIZE) {
+      const chunk = bars.slice(i, i + INSERT_CHUNK_SIZE)
+      const values = chunk.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ')
+      const params = chunk.flatMap((bar) => [
+        bar.symbol,
+        bar.ts,
+        bar.open,
+        bar.high,
+        bar.low,
+        bar.close,
+        bar.volume,
+      ])
+      await db.run(
+        `INSERT OR REPLACE INTO bars (symbol, ts, open, high, low, close, volume)
+         VALUES ${values}`,
+        ...params,
+      )
+    }
+    await db.run('COMMIT')
+  } catch (err) {
+    // Best-effort: if the rollback itself fails the original error is the useful one.
+    await db.run('ROLLBACK').catch(() => {})
+    throw err
   }
+
   return bars.length
 }
 
