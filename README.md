@@ -97,7 +97,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 25 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 26 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -245,13 +245,14 @@ trading-platform-stp/
 │     ├─ app.js                   createApp(db, {apiKey, corsOrigins}) — CORS allowlist, JSON,
 │     │                           metrics middleware, API-key auth, routers
 │     ├─ middleware/              auth.js (API key) · rateLimit.js (fixed-window, LLM routes)
+│     ├─ lib/expiringStore.js     TTL + LRU map behind the session and settlement stores
 │     ├─ routes/
 │     │  ├─ data.js               GET /symbols · POST /fetch · GET /bars/:symbol
-│     │  ├─ simulation.js         session lifecycle, step/rewind/jump/reset, perf, risk, compliance
+│     │  ├─ simulation.js         session lifecycle, step/rewind/jump/reset, DELETE, perf, risk, compliance
 │     │  ├─ analytics.js          GET /signals · GET /indicators/:symbol
 │     │  ├─ strategy.js           POST /generate            (Groq)
 │     │  ├─ copilot.js            POST /ask                 (Groq)
-│     │  ├─ settlement.js         POST /run · GET /runs · GET /:runId[/ledger|/breaks|/report.pdf]
+│     │  ├─ settlement.js         POST /run · GET /runs · GET/DELETE /:runId[/ledger|/breaks|/report.pdf]
 │     │  └─ metrics.js            GET /metrics (Prom text) · GET /api/metrics/summary (JSON)
 │     ├─ agents/
 │     │  ├─ groqClient.js         lazy Groq SDK client + GROQ_MODEL
@@ -269,7 +270,7 @@ trading-platform-stp/
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
 │     ├─ db/duckdb.js             promise wrapper + `bars` schema
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       25 Vitest suites (Groq mocked — no API key needed)
+│  └─ test/                       26 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -421,6 +422,10 @@ curl -X POST http://localhost:4000/api/data/fetch \
 | `GROQ_MODEL` | `backend/.env` | `llama-3.3-70b-versatile` | Groq model id |
 | `API_KEY` | `backend/.env` | generated at boot | Shared key required on every `/api` route |
 | `CORS_ORIGIN` | backend env | `http://localhost:5173` | Comma-separated browser origin allowlist |
+| `SESSION_TTL_MS` | backend env | `3600000` | Idle time before a replay session is dropped |
+| `MAX_SESSIONS` | backend env | `200` | Hard cap on live replay sessions |
+| `SETTLEMENT_RUN_TTL_MS` | backend env | `21600000` | Idle time before a settlement run is dropped |
+| `MAX_SETTLEMENT_RUNS` | backend env | `100` | Hard cap on stored settlement runs |
 | `PORT` | backend env | `4000` | API + `/metrics` port |
 | `DUCKDB_PATH` | backend env | `./data/market.duckdb` | Bar cache file |
 | `VITE_API_BASE_URL` | `frontend/.env` | `http://localhost:4000/api` | API base the SPA calls |
@@ -491,7 +496,7 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 25 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 26 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
 ```
@@ -591,7 +596,12 @@ the corresponding backend agent work.
   5-minute data for the same symbol makes the replay mix granularities. Annualized figures
   detect this and fall back to a daily assumption rather than reporting an inflated Sharpe, but
   the price series itself is still mixed. Use one bar size per symbol.
-- Replay sessions live in an in-memory map in the backend process — they don't survive a
-  restart and won't work across multiple instances.
+- Replay sessions and settlement runs live in in-memory stores in the backend process — they
+  don't survive a restart and won't work across multiple instances. Both are bounded by a TTL
+  and an entry cap (`SESSION_TTL_MS`/`MAX_SESSIONS`,
+  `SETTLEMENT_RUN_TTL_MS`/`MAX_SETTLEMENT_RUNS`) and evict least-recently-used, so an idle
+  session or an old run can disappear; `DELETE /api/simulation/:id` and
+  `DELETE /api/settlement/:runId` release one immediately. A dropped settlement run is
+  recoverable — the procedure is deterministic, so re-posting the same request reproduces it.
 - The Prometheus trading gauges are labelled by symbol only, so two concurrent sessions on the
   same symbol overwrite each other's values.

@@ -7,6 +7,7 @@ import { computePerformance, inferPeriodsPerYear } from '../analytics/performanc
 import { evaluateRisk } from '../agents/riskEngine.js'
 import { draftComplianceTriage } from '../agents/complianceAgent.js'
 import { LlmValidationError } from '../agents/llmJson.js'
+import { ExpiringStore } from '../lib/expiringStore.js'
 import {
   simulationSessionsStarted,
   simulationSessionsActive,
@@ -19,7 +20,26 @@ import {
 // In-memory session store. Fine for a single-instance demo/paper-trading server; a real
 // deployment would move this to a shared store (workplan.md §8 notes horizontal scaling
 // for the production agents — this replay sandbox is intentionally simpler).
-const sessions = new Map()
+//
+// Bounded on both axes because each session pins a whole bar array: entries expire after an
+// hour idle, and the store holds at most 200. Without that, a loop on POST /start is a
+// one-line way to exhaust the process's memory.
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_MS ?? 60 * 60 * 1000)
+const MAX_SESSIONS = Number(process.env.MAX_SESSIONS ?? 200)
+
+const sessions = new ExpiringStore({
+  ttlMs: SESSION_TTL_MS,
+  maxEntries: MAX_SESSIONS,
+  // The active gauge is the one number that says how much the process is holding, so it has
+  // to move on eviction too, not only on start and delete.
+  onEvict: () => simulationSessionsActive.set(sessions.size),
+})
+
+/** Test-only: drop every session so a module-level store does not leak between cases. */
+export function _resetSessionsForTesting() {
+  sessions.clear()
+  simulationSessionsActive.set(0)
+}
 
 function getSession(id) {
   const session = sessions.get(id)
@@ -114,6 +134,21 @@ export function simulationRouter(db) {
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }
+  })
+
+  /**
+   * Release a session's memory now rather than waiting for its TTL.
+   *
+   * A caller that knows it is finished should be able to say so — the TTL is the backstop
+   * for callers that crash or wander off, not the primary mechanism.
+   */
+  router.delete('/:id', (req, res) => {
+    const existed = sessions.delete(req.params.id)
+    if (!existed) {
+      return res.status(404).json({ error: `Unknown simulation session: ${req.params.id}` })
+    }
+    simulationSessionsActive.set(sessions.size)
+    res.json({ sessionId: req.params.id, deleted: true, activeSessions: sessions.size })
   })
 
   router.post('/:id/step', (req, res) => {

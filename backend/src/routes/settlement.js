@@ -15,13 +15,26 @@ import { Router } from 'express'
 import { runSettlementProcedure } from '../posttrade/procedure.js'
 import { renderSettlementReport } from '../posttrade/report.js'
 import { getSessionExecutions } from './simulation.js'
+import { ExpiringStore } from '../lib/expiringStore.js'
 import {
   settlementProcedureDuration,
   settlementReportsRenderedTotal,
   recordSettlementRun,
 } from '../metrics/registry.js'
 
-const runs = new Map()
+// Bounded for the same reason the session store is: a settlement run holds a full ledger,
+// trade list and reconciliation, and an unauthenticated loop on POST /run would otherwise
+// grow the process without limit. A dropped run is recoverable — the procedure is
+// deterministic, so re-posting the same request reproduces it exactly.
+const RUN_TTL_MS = Number(process.env.SETTLEMENT_RUN_TTL_MS ?? 6 * 60 * 60 * 1000)
+const MAX_RUNS = Number(process.env.MAX_SETTLEMENT_RUNS ?? 100)
+
+const runs = new ExpiringStore({ ttlMs: RUN_TTL_MS, maxEntries: MAX_RUNS })
+
+/** Test-only: drop every stored run so cases do not observe each other's state. */
+export function _resetSettlementRunsForTesting() {
+  runs.clear()
+}
 
 function getRun(id) {
   const run = runs.get(id)
@@ -105,7 +118,7 @@ export function settlementRouter() {
   /** Every run held in memory, newest work last — enough to find a run id. */
   router.get('/runs', (req, res) => {
     res.json({
-      runs: [...runs.entries()].map(([runId, { result, sessionId }]) => ({
+      runs: [...runs].map(([runId, { result, sessionId }]) => ({
         runId,
         sessionId,
         symbol: result.symbol,
@@ -177,6 +190,14 @@ export function settlementRouter() {
     } catch (err) {
       res.status(err.status ?? 500).json({ error: err.message })
     }
+  })
+
+  /** Drop a run now rather than waiting for its TTL. */
+  router.delete('/:runId', (req, res) => {
+    if (!runs.delete(req.params.runId)) {
+      return res.status(404).json({ error: `Unknown settlement run: ${req.params.runId}` })
+    }
+    res.json({ runId: req.params.runId, deleted: true })
   })
 
   return router
