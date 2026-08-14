@@ -7,6 +7,7 @@ import { copilotRouter } from './routes/copilot.js'
 import { analyticsRouter } from './routes/analytics.js'
 import { settlementRouter } from './routes/settlement.js'
 import { metricsRouter } from './routes/metrics.js'
+import { healthRouter } from './routes/health.js'
 import { httpMetricsMiddleware } from './metrics/httpMetrics.js'
 import { apiKeyAuth } from './middleware/auth.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
@@ -37,6 +38,7 @@ export function parseOrigins(raw) {
  * @param {string[]} [options.corsOrigins] browser origins allowed to call the API
  * @param {string} [options.jsonLimit] largest request body the JSON parser will accept
  * @param {number} [options.trustProxy] reverse-proxy hops in front of this process
+ * @param {() => boolean} [options.isDraining] true once graceful shutdown has begun
  */
 export function createApp(
   db,
@@ -45,6 +47,7 @@ export function createApp(
     corsOrigins = DEFAULT_ORIGINS,
     jsonLimit = DEFAULT_JSON_LIMIT,
     trustProxy = 0,
+    isDraining = () => false,
   } = {},
 ) {
   const app = express()
@@ -67,11 +70,11 @@ export function createApp(
   // Before the routes, so every request — including 404s — is counted.
   app.use(httpMetricsMiddleware)
 
-  app.get('/api/health', (req, res) => res.json({ ok: true }))
+  app.use(healthRouter(db, { isDraining }))
   app.use(metricsRouter())
 
-  // Everything below this line needs the key. /api/health and /metrics are listed as public
-  // inside the middleware so a probe and a Prometheus scrape still work uncredentialed.
+  // Everything below this line needs the key. The probes and /metrics are listed as public
+  // inside the middleware so an orchestrator and a Prometheus scrape work uncredentialed.
   app.use(apiKeyAuth(apiKey))
 
   app.use('/api/data', dataRouter(db))

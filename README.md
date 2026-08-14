@@ -109,7 +109,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 29 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 33 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -457,6 +457,8 @@ curl -X POST http://localhost:4000/api/data/fetch \
 | `SETTLEMENT_RUN_TTL_MS` | backend env | `21600000` | Idle time before a settlement run is dropped |
 | `MAX_SETTLEMENT_RUNS` | backend env | `100` | Hard cap on stored settlement runs |
 | `JSON_BODY_LIMIT` | backend env | `2mb` | Largest request body the JSON parser accepts |
+| `SHUTDOWN_DRAIN_MS` | backend env | `5000` | Time spent reporting not-ready before closing the listener |
+| `SHUTDOWN_TIMEOUT_MS` | backend env | `15000` | Hard deadline on the whole shutdown sequence |
 | `TRUST_PROXY` | backend env | `0` | Reverse-proxy hops in front of the process |
 | `PORT` | backend env | `4000` | API + `/metrics` port |
 | `DUCKDB_PATH` | backend env | `./data/market.duckdb` | Bar cache file |
@@ -506,6 +508,23 @@ requests per key per minute, so a valid key still cannot run up an unbounded bil
 A key embedded in a browser bundle is readable by anyone who loads the page — this closes the
 API to the open internet, not to the SPA's own user. A real deployment would put a per-user
 session in front of it (see `workplan.md` §9).
+
+### Probes and graceful shutdown
+
+Two probes, answering two different questions, both open without a key:
+
+- `GET /api/health` — **liveness**. Touches nothing else, so a slow query can never be
+  mistaken for a dead process and turned into a restart loop.
+- `GET /api/ready` — **readiness**. Runs `SELECT 1` against DuckDB and reports 503
+  (`database_unavailable`) if the handle is broken, or 503 (`draining`) once shutdown begins.
+
+On `SIGTERM`/`SIGINT` the process drains rather than dying mid-response: it flips readiness to
+503, waits `SHUTDOWN_DRAIN_MS` for the load balancer to deregister it, closes the listener
+while letting in-flight requests finish, closes DuckDB, then exits 0. A hard
+`SHUTDOWN_TIMEOUT_MS` deadline force-exits non-zero if a step hangs, so the instance never
+lingers waiting for a `SIGKILL`. `uncaughtException` and `unhandledRejection` take the same
+path with exit code 1 — an unknown-state process should be replaced, but it can still finish
+what it is already holding.
 
 ### Response headers and body limits
 

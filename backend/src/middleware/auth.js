@@ -32,10 +32,11 @@ function presentedKey(req) {
 
 /**
  * @param {string|null} apiKey the configured key; a falsy value disables the check entirely
- * @param {string[]} publicPaths exact paths that stay open (liveness probes and /metrics,
- *   which Prometheus scrapes without credentials from inside the network)
+ * @param {string[]} publicPaths exact paths that stay open (the liveness and readiness
+ *   probes, which an orchestrator calls without credentials, and /metrics, which Prometheus
+ *   scrapes without credentials from inside the network)
  */
-export function apiKeyAuth(apiKey, publicPaths = ['/api/health', '/metrics']) {
+export function apiKeyAuth(apiKey, publicPaths = ['/api/health', '/api/ready', '/metrics']) {
   const open = new Set(publicPaths)
 
   return function apiKeyAuthMiddleware(req, res, next) {
