@@ -1,0 +1,60 @@
+# The application stack: the API and the SPA that talks to it.
+#
+#   API_KEY=$(openssl rand -hex 24) docker compose up --build
+#   SPA:  http://localhost:8080   (FRONTEND_PORT to move it)
+#   API:  http://localhost:4000/api/health  (BACKEND_PORT to move it)
+#
+# The monitoring stack (Prometheus + Grafana) stays in `monitoring/docker-compose.yml` and is
+# started separately. It scrapes the backend through the published host port, so it works the
+# same whether the backend runs here or with `npm run dev`.
+#
+# API_KEY is required and deliberately has no default: a stack that boots with a known key is
+# an unauthenticated stack. The backend refuses to start without one in production anyway.
+
+services:
+  backend:
+    build:
+      context: ./backend
+    image: stp-backend:local
+    container_name: stp-backend
+    restart: unless-stopped
+    ports:
+      - '${BACKEND_PORT:-4000}:4000'
+    environment:
+      NODE_ENV: production
+      PORT: '4000'
+      API_KEY: ${API_KEY:?set API_KEY, e.g. API_KEY=$(openssl rand -hex 24) docker compose up}
+      # The browser talks to the backend over the published host port, so that — not the
+      # service name — is the origin the API must allow.
+      CORS_ORIGIN: http://localhost:${FRONTEND_PORT:-8080}
+      DUCKDB_PATH: /app/data/market.duckdb
+      LOG_FORMAT: json
+      LOG_LEVEL: info
+      # One hop: nothing sits in front of the container here, but keep it explicit so the
+      # value that matters behind a real balancer is visible in one place.
+      TRUST_PROXY: '0'
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    volumes:
+      - backend-data:/app/data
+    # Give the drain in src/lifecycle.js room to finish before Docker escalates to SIGKILL:
+    # comfortably above SHUTDOWN_DRAIN_MS + SHUTDOWN_TIMEOUT_MS.
+    stop_grace_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Vite inlines these at build time, so they are build args rather than environment.
+        VITE_API_BASE_URL: http://localhost:${BACKEND_PORT:-4000}/api
+        VITE_API_KEY: ${API_KEY:?set API_KEY}
+    image: stp-frontend:local
+    container_name: stp-frontend
+    restart: unless-stopped
+    ports:
+      - '${FRONTEND_PORT:-8080}:80'
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend-data:

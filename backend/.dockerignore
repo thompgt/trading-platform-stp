@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+data
+test
+.env
+.env.*
+!.env.example
+.oxlintrc.json
+Dockerfile
+.dockerignore

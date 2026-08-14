@@ -594,6 +594,30 @@ If you move the backend port, update the scrape target in
 `monitoring/prometheus/prometheus.yml` and reload:
 `curl -X POST http://localhost:9090/-/reload`.
 
+### Running the whole stack in Docker
+
+```bash
+API_KEY=$(openssl rand -hex 24) docker compose up --build
+# SPA  http://localhost:8080   (FRONTEND_PORT to move it)
+# API  http://localhost:4000/api/health   (BACKEND_PORT to move it)
+```
+
+`API_KEY` is required and has no default — a stack that boots with a known key is an
+unauthenticated stack. Set `GROQ_API_KEY` too if you want the gen-AI routes.
+
+Both images are multi-stage. The backend build stage carries python3/make/g++ for DuckDB's
+native addon so a build never depends on a matching prebuild existing, and the runtime stage
+ships neither; it runs as the unprivileged `node` user, keeps the DuckDB file on a named
+volume rather than in a layer, and declares a `HEALTHCHECK` so Compose can tell "started"
+from "answers". `CMD` is exec form, so Node is PID 1 and receives `SIGTERM` directly — that is
+what makes `docker stop` run the drain in `src/lifecycle.js` instead of killing the process
+outright (verified: listener closes, DuckDB closes, exit 0, inside `stop_grace_period`).
+
+The frontend image is nginx serving the built bundle — no Node, no source. Vite inlines
+`VITE_*` at build time, so the API base URL and key are **build args**, not runtime
+environment. nginx falls back to `index.html` so a refresh on `/portfolio` loads the app
+instead of 404ing, and hashed assets are cached hard while `index.html` never is.
+
 ### Monitoring stack (Docker)
 
 ```bash

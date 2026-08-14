@@ -51,15 +51,14 @@ Make the process behave like a service before adding surface to it.
 - [x] Liveness vs readiness split; graceful drain on SIGTERM with a hard deadline
 - [x] Structured JSON logging with request-id correlation and credential redaction
 - [x] Boot-time config validation — fail fast and loudly on a bad or unsafe configuration
-- [ ] Dockerfile + compose for the app itself, joined to the existing monitoring stack
+- [x] Dockerfile + compose for the app itself, joined to the existing monitoring stack
 - [ ] Prometheus alert rules and a runbook for each one
 
 ### Phase 1 — The order domain, on a real transactional store
 
 The foundation everything else stands on. Nothing here is UI work.
 
-- [ ] Introduce SQLite (single-node) or Postgres for the OLTP side; DuckDB stays the
-      analytical store for bars. A migration tool, checked in, applied at boot.
+- [ ] Introduce **Postgres** for the OLTP side; DuckDB stays the analytical store for bars. A migration tool, checked in, applied at boot.
 - [ ] Schema: `orders`, `executions`, `allocations`, `positions`, `cash_movements`, and an
       append-only `events` table every state change writes to.
 - [ ] An explicit order state machine — `NEW → PENDING_RISK → WORKING → PARTIALLY_FILLED →
