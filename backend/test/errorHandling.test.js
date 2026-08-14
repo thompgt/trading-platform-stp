@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import request from 'supertest'
 import { createApp } from '../src/app.js'
 import { httpError, badRequest } from '../src/middleware/errors.js'
@@ -9,16 +9,27 @@ import { httpError, badRequest } from '../src/middleware/errors.js'
  * escaped from DuckDB, the filesystem or a library is logged and reported as a bare 500.
  */
 
-// The handler logs every failure; the test suite does not need to read them.
-let consoleError
+// The handler logs every failure through the injected structured logger; these tests read
+// the captured lines instead of letting them reach stdout.
+let lines
 
-beforeEach(() => {
-  consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-})
+function capturingLogger(bound = {}) {
+  if (!bound.requestId) lines = []
+  const record = (level) => (msg, fields) => lines.push({ level, msg, ...bound, ...fields })
+  return {
+    level: 'debug',
+    debug: record('debug'),
+    info: record('info'),
+    warn: record('warn'),
+    error: record('error'),
+    child: (more) => capturingLogger({ ...bound, ...more }),
+  }
+}
 
-afterEach(() => {
-  consoleError.mockRestore()
-})
+/** The app under test, with its log captured. */
+function appWith(db) {
+  return createApp(db, { logger: capturingLogger() })
+}
 
 /** A db whose every query fails the way DuckDB actually fails: with our schema in the text. */
 function failingDb(message) {
@@ -33,20 +44,24 @@ const DUCKDB_LEAK =
 
 describe('error responses', () => {
   it('does not echo an unexpected internal error back to the caller', async () => {
-    const app = createApp(failingDb(DUCKDB_LEAK))
+    const app = appWith(failingDb(DUCKDB_LEAK))
     const res = await request(app).get('/api/data/symbols')
 
     expect(res.status).toBe(500)
-    expect(res.body).toEqual({ error: 'Internal server error' })
+    expect(res.body.error).toBe('Internal server error')
+    expect(Object.keys(res.body).sort()).toEqual(['error', 'requestId'])
     expect(JSON.stringify(res.body)).not.toContain('Catalog Error')
     expect(JSON.stringify(res.body)).not.toContain('market.duckdb')
 
-    // Logged, not published — the operator still gets the real thing.
-    expect(consoleError).toHaveBeenCalled()
+    // Logged, not published — the operator still gets the real thing, tied to the id the
+    // caller was handed.
+    const logged = lines.find((l) => l.level === 'error')
+    expect(logged.err.message).toContain('Catalog Error')
+    expect(logged.requestId).toBe(res.body.requestId)
   })
 
   it('reports an upstream market-data failure without quoting the provider', async () => {
-    const app = createApp(failingDb('unused'))
+    const app = appWith(failingDb('unused'))
     const res = await request(app)
       .post('/api/data/fetch')
       .send({ symbol: 'TEST', period1: '2024-01-01', period2: '2024-02-01' })
@@ -57,7 +72,7 @@ describe('error responses', () => {
   })
 
   it('keeps the wording of a 4xx we raised ourselves', async () => {
-    const app = createApp(failingDb('unused'))
+    const app = appWith(failingDb('unused'))
     const res = await request(app).post('/api/simulation/does-not-exist/step').send({})
 
     expect(res.status).toBe(404)

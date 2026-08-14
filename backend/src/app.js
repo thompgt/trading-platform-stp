@@ -12,7 +12,9 @@ import { httpMetricsMiddleware } from './metrics/httpMetrics.js'
 import { apiKeyAuth } from './middleware/auth.js'
 import { securityHeaders } from './middleware/securityHeaders.js'
 import { rateLimit } from './middleware/rateLimit.js'
+import { requestLog } from './middleware/requestLog.js'
 import { errorHandler } from './middleware/errors.js'
+import { logger as defaultLogger } from './lib/logger.js'
 
 /** Origins allowed to call the API when none are configured — the local Vite dev server. */
 const DEFAULT_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
@@ -39,6 +41,7 @@ export function parseOrigins(raw) {
  * @param {string} [options.jsonLimit] largest request body the JSON parser will accept
  * @param {number} [options.trustProxy] reverse-proxy hops in front of this process
  * @param {() => boolean} [options.isDraining] true once graceful shutdown has begun
+ * @param {object} [options.logger] structured logger for the access log
  */
 export function createApp(
   db,
@@ -48,6 +51,7 @@ export function createApp(
     jsonLimit = DEFAULT_JSON_LIMIT,
     trustProxy = 0,
     isDraining = () => false,
+    logger = defaultLogger,
   } = {},
 ) {
   const app = express()
@@ -58,6 +62,8 @@ export function createApp(
   app.set('trust proxy', trustProxy)
   app.disable('x-powered-by')
 
+  // First in the chain: everything after this point can log against the request's id.
+  app.use(requestLog({ logger }))
   app.use(securityHeaders())
   // An explicit allowlist, not `cors()`. The default is a wildcard, which on an API that
   // proxies a paid LLM key and serves ledgers means any page on the internet can spend the

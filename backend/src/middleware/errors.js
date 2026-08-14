@@ -9,8 +9,11 @@
  * `Internal server error`, because the message is a map of the server's internals and the
  * caller can do nothing with it anyway.
  *
- * The full error is always logged. Nothing is lost, it just stops being published.
+ * The full error is always logged against the request's id. Nothing is lost, it just stops
+ * being published — and the caller gets that id back so the two can be joined later.
  */
+
+import { logger } from '../lib/logger.js'
 
 /** An error the client is allowed to read, with the status we intend to return. */
 export function httpError(status, message, options = {}) {
@@ -37,13 +40,23 @@ export function errorHandler() {
     const expose = typeof err?.expose === 'boolean' ? err.expose : status < 500
     const message = expose && err?.message ? err.message : 'Internal server error'
 
-    console.error(`${req.method} ${req.originalUrl} -> ${status}`, err)
+    // Logged against the request's own id, so the flat `Internal server error` a caller sees
+    // can be traced to the real stack without publishing it.
+    const log = req.log ?? logger
+    log.error('request error', {
+      method: req.method,
+      path: req.originalUrl,
+      status,
+      err,
+    })
 
     if (res.headersSent) return
 
     const body = { error: message }
     if (err?.kind) body.kind = err.kind
     if (err?.details) body.details = err.details
+    // Given to the caller on purpose: it is the handle they quote when reporting the failure.
+    if (req.id) body.requestId = req.id
     res.status(status).json(body)
   }
 }

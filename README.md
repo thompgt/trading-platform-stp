@@ -109,7 +109,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 33 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 34 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -457,6 +457,8 @@ curl -X POST http://localhost:4000/api/data/fetch \
 | `SETTLEMENT_RUN_TTL_MS` | backend env | `21600000` | Idle time before a settlement run is dropped |
 | `MAX_SETTLEMENT_RUNS` | backend env | `100` | Hard cap on stored settlement runs |
 | `JSON_BODY_LIMIT` | backend env | `2mb` | Largest request body the JSON parser accepts |
+| `LOG_LEVEL` | backend env | `info` | `debug`/`info`/`warn`/`error`/`silent` |
+| `LOG_FORMAT` | backend env | `json` | `json` for shipping, `pretty` for a terminal |
 | `SHUTDOWN_DRAIN_MS` | backend env | `5000` | Time spent reporting not-ready before closing the listener |
 | `SHUTDOWN_TIMEOUT_MS` | backend env | `15000` | Hard deadline on the whole shutdown sequence |
 | `TRUST_PROXY` | backend env | `0` | Reverse-proxy hops in front of the process |
@@ -508,6 +510,19 @@ requests per key per minute, so a valid key still cannot run up an unbounded bil
 A key embedded in a browser bundle is readable by anyone who loads the page — this closes the
 API to the open internet, not to the SPA's own user. A real deployment would put a per-user
 session in front of it (see `workplan.md` §9).
+
+### Logging and request correlation
+
+The backend emits one JSON object per line (`LOG_FORMAT=pretty` for a readable local line,
+`LOG_LEVEL=silent` under test). Every request is assigned an id — the caller's `X-Request-Id`
+if it sent a short, URL-safe one, otherwise a UUID — which is echoed on the response, stamped
+on every line the request produces, **and returned in the body of any error**. So the flat
+`Internal server error` a caller sees carries a `requestId` they can quote, and that id leads
+straight to the real stack in the log without publishing it. Credential-shaped fields
+(`apiKey`, `authorization`, `token`, …) are redacted at any depth before a line is written.
+
+Probes and `/metrics` log at `debug`, so a scrape loop does not bury real traffic. Requests
+that die mid-response are logged with `aborted: true` rather than vanishing.
 
 ### Probes and graceful shutdown
 
