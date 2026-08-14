@@ -43,7 +43,7 @@ gets rebuilt later.
 
 Each phase is independently demoable and leaves `main` green.
 
-### Phase 0 — Operational baseline *(in progress)*
+### Phase 0 — Operational baseline *(complete)*
 
 Make the process behave like a service before adding surface to it.
 
@@ -52,7 +52,7 @@ Make the process behave like a service before adding surface to it.
 - [x] Structured JSON logging with request-id correlation and credential redaction
 - [x] Boot-time config validation — fail fast and loudly on a bad or unsafe configuration
 - [x] Dockerfile + compose for the app itself, joined to the existing monitoring stack
-- [ ] Prometheus alert rules and a runbook for each one
+- [x] Prometheus alert rules and a runbook for each one
 
 ### Phase 1 — The order domain, on a real transactional store
 

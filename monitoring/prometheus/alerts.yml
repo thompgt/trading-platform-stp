@@ -1,0 +1,138 @@
+# Alert rules for the STP backend.
+#
+# The bar for a rule being here: **it would wake someone up, and there is something they
+# could do about it.** Metrics that are merely interesting belong on the dashboard. Every
+# rule carries a `runbook` annotation pointing at the section of docs/runbook.md that says
+# what to actually do — an alert with no response is a notification, and notifications get
+# muted until the one that mattered is muted too.
+#
+# Two families, because they fail differently:
+#   - *Platform* rules (up, latency, error rate, event loop) — the service is unhealthy.
+#   - *Business* rules (settlement out of balance, unreconciled, STP rate) — the service is
+#     fine and the numbers are wrong, which on a settlement platform is the worse case.
+
+groups:
+  - name: stp-platform
+    rules:
+      - alert: BackendDown
+        expr: up{job="stp-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Backend is not being scraped'
+          description: >-
+            Prometheus cannot reach the backend's /metrics. Either the process is down or the
+            scrape target is wrong — check the `prometheus` job is still up before assuming
+            the former.
+          runbook: 'docs/runbook.md#backenddown'
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(stp_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(stp_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Over 5% of requests are failing'
+          description: >-
+            5xx share of all requests exceeded 5% for five minutes. Every 5xx carries a
+            requestId in its body and its log line; start from those rather than guessing.
+          runbook: 'docs/runbook.md#higherrorrate'
+
+      - alert: SlowRequests
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, route) (rate(stp_http_request_duration_seconds_bucket{route!~"/api/copilot.*|/api/strategy.*"}[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'p95 latency above 2s on {{ $labels.route }}'
+          description: >-
+            The LLM routes are excluded deliberately — they are slow by nature and bounded by
+            their own deadline. Anything else taking seconds is a DuckDB query or a replay.
+          runbook: 'docs/runbook.md#slowrequests'
+
+      - alert: EventLoopBlocked
+        expr: stp_nodejs_eventloop_lag_p99_seconds > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Event loop lag p99 above 500ms'
+          description: >-
+            Node is single-threaded: sustained lag means synchronous work — a large replay, a
+            big JSON serialization — is starving every other request, including the probes.
+          runbook: 'docs/runbook.md#eventloopblocked'
+
+      - alert: LlmFailureRate
+        expr: |
+          sum(rate(stp_llm_requests_total{outcome!="success"}[10m]))
+            / clamp_min(sum(rate(stp_llm_requests_total[10m])), 0.001) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Over a quarter of Groq calls are failing'
+          description: >-
+            Split by outcome before acting: `timeout` is upstream or network, and
+            `validation_failed` means the model stopped producing the schema we require —
+            a different problem with a different fix.
+          runbook: 'docs/runbook.md#llmfailurerate'
+
+  - name: stp-business
+    rules:
+      - alert: SettlementBooksOutOfBalance
+        expr: stp_settlement_books_in_balance == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Double-entry ledger does not balance'
+          description: >-
+            Debits and credits disagree on the last settlement run. This is a correctness
+            failure in the ledger, not a data-quality one: no settlement output should be
+            trusted or sent anywhere until it is explained.
+          runbook: 'docs/runbook.md#settlementbooksoutofbalance'
+
+      - alert: SettlementUnreconciled
+        expr: stp_settlement_reconciled == 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Custodian reconciliation did not match'
+          description: >-
+            Our positions and the custodian statement disagree. Expected while breaks are
+            open; the alert exists so an unexplained break cannot sit unnoticed.
+          runbook: 'docs/runbook.md#settlementunreconciled'
+
+      - alert: StraightThroughRateLow
+        expr: stp_settlement_straight_through_rate_pct < 80
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'STP rate below 80%'
+          description: >-
+            The share of fills reaching SETTLED with no human touchpoint — the one number
+            that says whether the automation is working. A drop means fills are dropping to
+            the exception queue; the stage report says at which stage.
+          runbook: 'docs/runbook.md#straightthroughratelow'
+
+      - alert: SettlementFailsSpike
+        expr: increase(stp_settlement_fails_total[1h]) > 5
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than five settlement fails in an hour'
+          description: >-
+            Fails carry funding and buy-in cost and are time-sensitive under T+1, let alone
+            T+0. Check whether they share a counterparty or a security before treating them
+            as individual incidents.
+          runbook: 'docs/runbook.md#settlementfailsspike'

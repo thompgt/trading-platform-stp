@@ -13,6 +13,12 @@ global:
   external_labels:
     monitor: stp-local
 
+# Alert rules live beside this file. Prometheus evaluates them; there is no Alertmanager in
+# this stack, so a firing alert is visible at http://localhost:9090/alerts rather than paged.
+# Wiring Alertmanager is a deployment decision, not a repo one.
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   - job_name: stp-backend
     metrics_path: /metrics
