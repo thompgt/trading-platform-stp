@@ -21,7 +21,12 @@ enableDefaultMetrics()
 const db = openDatabase(dbPath)
 await initSchema(db)
 
-const app = createApp(db, { apiKey, corsOrigins })
+const app = createApp(db, {
+  apiKey,
+  corsOrigins,
+  jsonLimit: process.env.JSON_BODY_LIMIT || '2mb',
+  trustProxy: Number.parseInt(process.env.TRUST_PROXY ?? '0', 10) || 0,
+})
 app.listen(port, () => {
   console.log(`STP backend listening on http://localhost:${port} (DuckDB: ${dbPath})`)
   console.log(`Prometheus metrics at http://localhost:${port}/metrics`)

@@ -9,11 +9,15 @@ import { settlementRouter } from './routes/settlement.js'
 import { metricsRouter } from './routes/metrics.js'
 import { httpMetricsMiddleware } from './metrics/httpMetrics.js'
 import { apiKeyAuth } from './middleware/auth.js'
+import { securityHeaders } from './middleware/securityHeaders.js'
 import { rateLimit } from './middleware/rateLimit.js'
 import { errorHandler } from './middleware/errors.js'
 
 /** Origins allowed to call the API when none are configured — the local Vite dev server. */
 const DEFAULT_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
+
+/** Largest JSON body accepted. Big enough for a multi-year bar ingest, small enough to bound. */
+const DEFAULT_JSON_LIMIT = '2mb'
 
 /** `CORS_ORIGIN` is a comma-separated allowlist; `*` is rejected rather than honored. */
 export function parseOrigins(raw) {
@@ -31,15 +35,35 @@ export function parseOrigins(raw) {
  * @param {object} [options]
  * @param {string|null} [options.apiKey] shared key required on /api; falsy disables the check
  * @param {string[]} [options.corsOrigins] browser origins allowed to call the API
+ * @param {string} [options.jsonLimit] largest request body the JSON parser will accept
+ * @param {number} [options.trustProxy] reverse-proxy hops in front of this process
  */
-export function createApp(db, { apiKey = null, corsOrigins = DEFAULT_ORIGINS } = {}) {
+export function createApp(
+  db,
+  {
+    apiKey = null,
+    corsOrigins = DEFAULT_ORIGINS,
+    jsonLimit = DEFAULT_JSON_LIMIT,
+    trustProxy = 0,
+  } = {},
+) {
   const app = express()
 
+  // Trust the hop count the operator configures (0 disables it). Without this every request
+  // behind a load balancer looks like it came from the balancer, so `req.ip` — which the rate
+  // limiter falls back to and the access log records — collapses to a single value.
+  app.set('trust proxy', trustProxy)
+  app.disable('x-powered-by')
+
+  app.use(securityHeaders())
   // An explicit allowlist, not `cors()`. The default is a wildcard, which on an API that
   // proxies a paid LLM key and serves ledgers means any page on the internet can spend the
   // operator's money from a visitor's browser.
   app.use(cors({ origin: corsOrigins, credentials: true }))
-  app.use(express.json())
+  // Bounded on purpose. `express.json()` defaults to 100kb, but the ingest and settlement
+  // routes legitimately take larger bodies, so the cap is raised deliberately rather than
+  // removed — an unbounded parser lets one request buffer the process out of memory.
+  app.use(express.json({ limit: jsonLimit }))
   // Before the routes, so every request — including 404s — is counted.
   app.use(httpMetricsMiddleware)
 

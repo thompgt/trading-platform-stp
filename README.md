@@ -456,6 +456,8 @@ curl -X POST http://localhost:4000/api/data/fetch \
 | `MAX_SESSIONS` | backend env | `200` | Hard cap on live replay sessions |
 | `SETTLEMENT_RUN_TTL_MS` | backend env | `21600000` | Idle time before a settlement run is dropped |
 | `MAX_SETTLEMENT_RUNS` | backend env | `100` | Hard cap on stored settlement runs |
+| `JSON_BODY_LIMIT` | backend env | `2mb` | Largest request body the JSON parser accepts |
+| `TRUST_PROXY` | backend env | `0` | Reverse-proxy hops in front of the process |
 | `PORT` | backend env | `4000` | API + `/metrics` port |
 | `DUCKDB_PATH` | backend env | `./data/market.duckdb` | Bar cache file |
 | `VITE_API_BASE_URL` | `frontend/.env` | `http://localhost:4000/api` | API base the SPA calls |
@@ -504,6 +506,24 @@ requests per key per minute, so a valid key still cannot run up an unbounded bil
 A key embedded in a browser bundle is readable by anyone who loads the page — this closes the
 API to the open internet, not to the SPA's own user. A real deployment would put a per-user
 session in front of it (see `workplan.md` §9).
+
+### Response headers and body limits
+
+Every response carries a small set of headers appropriate to a JSON API:
+`X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a frame-ancestors-only CSP,
+`Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy: same-site` and
+`Cache-Control: no-store` — responses are per-key and often per-run, so none of them belong in
+a shared cache. `X-Powered-By` is removed. `Strict-Transport-Security` is sent **only** on
+requests that arrived over TLS (directly or with `X-Forwarded-Proto: https`), because pinning
+a developer's `localhost` to https for a year is painful to undo.
+
+Request bodies are capped at `JSON_BODY_LIMIT` (default 2 MB — larger than Express's 100 KB
+default because bar ingest and settlement bodies are legitimately big, but still bounded;
+an unbounded parser lets one request buffer the process out of memory). Over the cap is a 413.
+
+Set `TRUST_PROXY` to the number of reverse-proxy hops when running behind a load balancer.
+Without it every request appears to come from the balancer, so `req.ip` — the rate limiter's
+fallback identity — collapses to one value shared by all callers.
 
 ### Running on a different port
 
