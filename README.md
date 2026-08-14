@@ -703,7 +703,9 @@ Still mock-data UI, ahead of the corresponding backend agents.
 
 ## Status and known limitations
 
-See `workplan.md` §10 for the phased roadmap. Functional end to end today: market data
+See `workplan.md` §10 for the original phased roadmap, and
+**[docs/t0-production-roadmap.md](./docs/t0-production-roadmap.md)** for the current,
+blunt gap list between what runs today and a production-ready T+0 pipeline. Functional end to end today: market data
 ingestion and DuckDB storage, bar-by-bar replay and resimulation, performance analytics, the
 strategy and copilot Groq agents, rules-based risk evaluation with Groq-drafted compliance
 triage, the indicator library and signal generation, and the full observability stack. The
