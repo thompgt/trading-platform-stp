@@ -50,7 +50,7 @@ Make the process behave like a service before adding surface to it.
 - [x] Security headers, bounded request bodies, `trust proxy`
 - [x] Liveness vs readiness split; graceful drain on SIGTERM with a hard deadline
 - [x] Structured JSON logging with request-id correlation and credential redaction
-- [ ] Boot-time config validation — fail fast and loudly on a bad or unsafe configuration
+- [x] Boot-time config validation — fail fast and loudly on a bad or unsafe configuration
 - [ ] Dockerfile + compose for the app itself, joined to the existing monitoring stack
 - [ ] Prometheus alert rules and a runbook for each one
 

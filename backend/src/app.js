@@ -17,21 +17,10 @@ import { errorHandler } from './middleware/errors.js'
 import { logger as defaultLogger } from './lib/logger.js'
 
 /** Origins allowed to call the API when none are configured — the local Vite dev server. */
-const DEFAULT_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
+export const DEFAULT_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
 
 /** Largest JSON body accepted. Big enough for a multi-year bar ingest, small enough to bound. */
 const DEFAULT_JSON_LIMIT = '2mb'
-
-/** `CORS_ORIGIN` is a comma-separated allowlist; `*` is rejected rather than honored. */
-export function parseOrigins(raw) {
-  if (!raw) return DEFAULT_ORIGINS
-  const origins = raw
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean)
-    .filter((o) => o !== '*')
-  return origins.length > 0 ? origins : DEFAULT_ORIGINS
-}
 
 /**
  * @param {object} db open DuckDB handle

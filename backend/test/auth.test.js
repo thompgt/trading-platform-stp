@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import request from 'supertest'
-import { createApp, parseOrigins } from '../src/app.js'
+import { createApp, DEFAULT_ORIGINS } from '../src/app.js'
+import { loadConfig, ConfigError } from '../src/config.js'
 import { openDatabase, initSchema } from '../src/db/duckdb.js'
 import { _setGroqClientForTesting } from '../src/agents/groqClient.js'
 
@@ -64,21 +65,34 @@ describe('API key authentication', () => {
 })
 
 describe('CORS origins', () => {
+  /** Load a configuration with only the fields under test supplied. */
+  function origins(corsOrigin) {
+    const env = { API_KEY: 'a-sufficiently-long-key', ...(corsOrigin ? { CORS_ORIGIN: corsOrigin } : {}) }
+    return loadConfig(env, { defaultOrigins: DEFAULT_ORIGINS }).corsOrigins
+  }
+
   it('falls back to the local dev server rather than a wildcard', () => {
-    expect(parseOrigins(undefined)).toEqual(['http://localhost:5173', 'http://127.0.0.1:5173'])
-    expect(parseOrigins('')).toEqual(['http://localhost:5173', 'http://127.0.0.1:5173'])
+    expect(origins(undefined)).toEqual(DEFAULT_ORIGINS)
+    expect(origins('')).toEqual(DEFAULT_ORIGINS)
   })
 
-  it('drops a wildcard entry instead of honoring it', () => {
-    expect(parseOrigins('*')).toEqual(['http://localhost:5173', 'http://127.0.0.1:5173'])
-    expect(parseOrigins('https://ops.example.com, *')).toEqual(['https://ops.example.com'])
+  it('refuses to start on a wildcard rather than quietly dropping it', () => {
+    // Silently ignoring `*` left an operator believing they had opened the API to a domain
+    // that was in fact rejected; now it is a boot failure with a reason.
+    expect(() => origins('*')).toThrow(ConfigError)
+    expect(() => origins('https://ops.example.com, *')).toThrow(/cannot be "\*"/)
   })
 
   it('parses a comma-separated allowlist', () => {
-    expect(parseOrigins('https://a.example, https://b.example')).toEqual([
+    expect(origins('https://a.example, https://b.example')).toEqual([
       'https://a.example',
       'https://b.example',
     ])
+  })
+
+  it('rejects an entry that is not a bare origin', () => {
+    expect(() => origins('https://a.example/app')).toThrow(/origin only/)
+    expect(() => origins('not-a-url')).toThrow(/is not a URL/)
   })
 
   it('reflects an allowed origin and refuses an unlisted one', async () => {

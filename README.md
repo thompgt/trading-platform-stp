@@ -109,7 +109,7 @@ README describes what is actually built and running.
   live in git, exist on first boot)
 
 **Testing**
-- **Vitest** on both sides — 34 backend suites, 13 frontend suites; Groq is mocked so the LLM
+- **Vitest** on both sides — 35 backend suites, 13 frontend suites; Groq is mocked so the LLM
   paths are testable without an API key; **Testing Library** + jsdom for components and pages
 
 ---
@@ -467,6 +467,18 @@ curl -X POST http://localhost:4000/api/data/fetch \
 | `VITE_API_BASE_URL` | `frontend/.env` | `http://localhost:4000/api` | API base the SPA calls |
 | `VITE_API_KEY` | `frontend/.env` | — | Must match the backend's `API_KEY` |
 
+### Configuration validation
+
+The whole environment is read and validated once at boot (`backend/src/config.js`). Anything
+invalid exits 78 (`EX_CONFIG`) with **every** problem listed at once, rather than one restart
+per mistake. That closes a class of failure where the process starts and looks healthy but
+isn't: `PORT=eight thousand` becomes `NaN` and Express listens on a random port,
+`SHUTDOWN_DRAIN_MS=abc` makes the drain timer fire immediately so graceful shutdown quietly
+stops being graceful, and a `CORS_ORIGIN` typo silently falls back to localhost.
+
+In production an unset `API_KEY` is a hard failure rather than a generated one, and a
+placeholder or sub-16-character key is refused everywhere.
+
 ### Request validation
 
 Every route body is parsed by a zod schema in one middleware before the handler runs, and the
@@ -503,7 +515,9 @@ open — the Groq proxy spends real money and the settlement routes serve full l
 counterparty settlement instructions, so an unconfigured deployment must not be the exposed
 one. Copy the printed value into `backend/.env` and `frontend/.env` to keep it across restarts.
 
-`CORS_ORIGIN` is an explicit allowlist; a `*` entry is dropped, not honored. The two
+`CORS_ORIGIN` is an explicit allowlist, and a `*` entry is a **boot failure**, not a silently
+dropped one — an operator who believes they opened the API to a domain that is in fact
+rejected is worse off than one whose process refused to start. The two
 Groq-backed routers (`/api/strategy`, `/api/copilot`) are additionally rate-limited to 20
 requests per key per minute, so a valid key still cannot run up an unbounded bill.
 
