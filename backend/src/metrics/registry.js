@@ -65,6 +65,30 @@ export const duckdbQueryDuration = new Histogram({
   registers: [register],
 })
 
+// Postgres holds the order domain; DuckDB holds bars. Both are instrumented, because
+// "the database is slow" and "the pool is exhausted" look identical from the API and have
+// opposite fixes — the first is a query to tune, the second is a leaked connection.
+export const pgQueryDuration = new Histogram({
+  name: 'stp_pg_query_duration_seconds',
+  help: 'Postgres query latency in seconds, by operation',
+  labelNames: ['operation'],
+  buckets: API_BUCKETS,
+  registers: [register],
+})
+
+export const pgPoolConnections = new Gauge({
+  name: 'stp_pg_pool_connections',
+  help: 'Postgres pool connections, by state (total, idle)',
+  labelNames: ['state'],
+  registers: [register],
+})
+
+export const pgPoolWaiting = new Gauge({
+  name: 'stp_pg_pool_waiting',
+  help: 'Requests waiting for a Postgres connection',
+  registers: [register],
+})
+
 export const marketDataFetchDuration = new Histogram({
   name: 'stp_market_data_fetch_duration_seconds',
   help: 'Upstream Yahoo Finance fetch latency in seconds',
