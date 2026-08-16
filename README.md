@@ -8,6 +8,7 @@ compliance surveillance, technical analytics, and full Prometheus/Grafana observ
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
 ![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![Groq](https://img.shields.io/badge/Groq-F55036?style=for-the-badge&logo=groq&logoColor=white)
 ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)
 ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white)
@@ -62,6 +63,15 @@ README describes what is actually built and running.
   with **supertest**, no listening socket required
 
 **Data engineering**
+- **Two stores, each doing what it is good at**: DuckDB for bars and anything that scans a
+  column, **Postgres** for the order domain — concurrent writers, row locking and transactions
+  that commit whole or not at all. The rule that keeps the split honest: anything that can
+  change a position, a balance or an order's state lives in Postgres, and DuckDB never holds
+  anything that cannot be recomputed from bars
+- **Migrations as a first-class thing** (`backend/src/db/migrate.js`): numbered SQL files
+  applied in order, exactly once, inside one transaction, guarded by a `pg_advisory_xact_lock`
+  so a rolling deploy cannot have two instances applying the same file, and checksummed so
+  editing an already-applied migration fails loudly instead of forking the schema
 - **DuckDB** as an embedded analytical store; promise wrapper over the callback driver,
   idempotent `INSERT OR REPLACE` upserts keyed on `(symbol, ts)`, schema bootstrap on boot
 - Batched, transactional ingestion — 500 rows per statement inside one transaction, so an
@@ -103,8 +113,9 @@ README describes what is actually built and running.
 **Observability**
 - `prom-client` instrumentation: HTTP RED metrics labelled by **matched route pattern** (not
   raw URL — replay paths carry session UUIDs), Node process/event-loop metrics, DuckDB query
-  timing, upstream fetch latency by outcome, per-agent LLM latency and outcomes, plus live
-  trading gauges (equity, P&L, drawdown, exposure, Sharpe)
+  timing, Postgres query timing and pool saturation (a slow query and an exhausted pool look
+  identical from the API and have opposite fixes), upstream fetch latency by outcome, per-agent
+  LLM latency and outcomes, plus live trading gauges (equity, P&L, drawdown, exposure, Sharpe)
 - **Prometheus + Grafana in Docker Compose**, fully file-provisioned (datasource and dashboard
   live in git, exist on first boot)
 
@@ -147,7 +158,8 @@ flowchart TB
 
     subgraph Data["Storage &amp; upstreams"]
         direction LR
-        Duck[("DuckDB<br/>bars table")]
+        Duck[("DuckDB<br/>bars table<br/><i>analytical</i>")]
+        PG[("Postgres<br/>orders · executions<br/>order_events<br/><i>transactional</i>")]
         Yahoo["Yahoo Finance"]
     end
 
@@ -168,6 +180,7 @@ flowchart TB
     Rules --> Duck
     TA --> Duck
     Yahoo -->|fetch once| Duck
+    Routes -.->|order domain,<br/>schema only so far| PG
     GenAI -.->|proposals &amp; drafts,<br/>never auto-executed| Routes
     Routes --> Metrics
     Metrics --> Prom
@@ -189,7 +202,7 @@ Two properties the diagram is meant to make obvious:
 There is no trained ML model anywhere in this repo. "Model" here means three distinct things,
 kept deliberately separate.
 
-**1. Persistence model — DuckDB** (`backend/src/db/duckdb.js`)
+**1a. Analytical persistence — DuckDB** (`backend/src/db/duckdb.js`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS bars (
@@ -207,8 +220,34 @@ CREATE TABLE IF NOT EXISTS bars (
 One table. The composite primary key makes re-fetching an overlapping range idempotent
 (`INSERT OR REPLACE`), which is what lets ingestion be retried freely. Everything else in the
 system — trades, equity curves, risk alerts, signals — is *derived* from these rows at request
-time and is not persisted, which is why the whole platform is reproducible from the bar cache
-alone.
+time and is not persisted, which is why the replay side of the platform is reproducible from
+the bar cache alone.
+
+**1b. Transactional persistence — Postgres** (`backend/src/db/postgres.js`,
+`backend/migrations/`)
+
+DuckDB is the wrong engine for orders: one exclusive file lock, one connection, an analytical
+writer. The order domain therefore lives in Postgres, reached over a separate instrumented
+pool. Schema so far (`001_order_domain.sql`):
+
+| Table | Holds | The decision worth knowing |
+|---|---|---|
+| `orders` | the current state of every order | a `version` column for optimistic concurrency, so two concurrent amendments cannot silently overwrite each other; `CHECK ((order_type = 'LIMIT') = (limit_price IS NOT NULL))` makes "limit order with no price" unrepresentable |
+| `executions` | fills, one row per venue execution | `UNIQUE (venue, venue_exec_id)` — a replayed fill feed cannot double-book. Append-only: a bad fill is corrected with a bust record, never an edit |
+| `order_events` | append-only audit trail | nothing in the app ever issues `UPDATE` or `DELETE` here. Replaying it in sequence reproduces an order's history exactly, which is what makes a lifecycle timeline — and a regulator-shaped review — possible |
+| `idempotency_keys` | submitted-order dedupe | stores the original *response body*, not just the fact of the key, because a retry after the first request completed must return the same body. The request hash catches the same key sent with a different body, which is a client bug worth failing on |
+| `schema_migrations` | applied version, name, checksum | written by the migration runner |
+
+Types are chosen so money and quantity cannot drift: prices are `BIGINT` in ten-thousandths of
+a cent (so a $123.4567 limit is exact), quantities are `NUMERIC(28,8)` because fractional
+shares are real and `0.1 + 0.2` must not become `0.30000000000000004` in a position, and every
+timestamp is `TIMESTAMPTZ`. `pg`'s `NUMERIC`/`INT8` values are deliberately left as strings at
+the driver boundary rather than parsed to `Number`, which is the same care `posttrade/money.js`
+takes.
+
+Order status is a Postgres enum, but the *transitions* between statuses are enforced in
+application code rather than by the database, because a rejected transition should come back
+with a reason the caller can read, not as a constraint violation.
 
 **2. Domain models** (in-memory, plain JS objects)
 
@@ -253,7 +292,8 @@ drawdown/exposure (`analytics/performance.js`), and the risk limits
 trading-platform-stp/
 ├─ backend/                       Node.js 20+ · Express 5 · ESM
 │  └─ src/
-│     ├─ server.js                entrypoint: env, DuckDB open + schema, listen
+│     ├─ server.js                entrypoint: env, DuckDB open + schema, Postgres pool +
+│     │                           migrate, listen
 │     ├─ app.js                   createApp(db, {apiKey, corsOrigins}) — CORS allowlist, JSON,
 │     │                           metrics middleware, API-key auth, routers
 │     ├─ middleware/              auth.js (API key) · rateLimit.js (fixed-window, LLM routes)
@@ -283,9 +323,14 @@ trading-platform-stp/
 │     │                           reconciliation.js · report.js · pdf.js · staticData.js
 │     ├─ simulation/              engine.js (cursor replay) · strategyRunner.js (execution)
 │     ├─ data/marketData.js       Yahoo fetch · DuckDB upsert/load · cached-symbol listing
-│     ├─ db/duckdb.js             promise wrapper + `bars` schema
+│     ├─ db/
+│     │  ├─ duckdb.js             promise wrapper + `bars` schema
+│     │  ├─ postgres.js           instrumented pool, transaction helper, ping for readiness
+│     │  └─ migrate.js            numbered migrations: one transaction, advisory lock, checksums
 │     └─ metrics/                 registry.js (all metric definitions) · httpMetrics.js
-│  └─ test/                       29 Vitest suites (Groq mocked — no API key needed)
+│  ├─ migrations/                 001_order_domain.sql — orders, executions, order_events,
+│  │                              idempotency_keys
+│  └─ test/                       35 Vitest suites (Groq mocked — no API key needed)
 │
 ├─ frontend/                      React 19 · Vite 8 · react-router-dom
 │  └─ src/
@@ -395,7 +440,11 @@ backend disappears). LLM outcomes separate `timeout`, `validation_failed` and `e
 ### Prerequisites
 
 - **Node.js 20+** (Vite 8 requires ≥ 20.19; Node 22 LTS is a safe choice) and npm
-- **Docker + Docker Compose** — only for the optional monitoring stack
+- **Docker + Docker Compose** — for the monitoring stack, the full-stack compose file, and the
+  easiest way to get a Postgres to point `DATABASE_URL` at
+- **Postgres 14+** — only for the order domain. Leave `DATABASE_URL` unset and the backend
+  starts without it, logs that the order domain is unavailable, and serves everything else
+  normally. It is required in production
 - **A Groq API key** — only for the three gen-AI features (strategy generation, research
   copilot, compliance triage). Everything else, including the full paper-trading loop, risk
   engine, analytics and the entire test suite, runs without one.
@@ -410,8 +459,18 @@ npm run dev               # nodemon, http://localhost:4000
 # or: npm start           # plain node, no watch
 ```
 
-On boot it opens the DuckDB file, creates the `bars` table if absent, and logs the listen
-address and metrics URL.
+On boot it opens the DuckDB file, creates the `bars` table if absent, and — if `DATABASE_URL`
+is set — opens the Postgres pool and applies any unapplied migrations *before* the listener
+starts, so the process never accepts traffic against a half-migrated schema. Then it logs the
+listen address and metrics URL.
+
+A throwaway Postgres for local work, if you don't already have one:
+
+```bash
+docker run -d --name stp-pg -p 5432:5432 \
+  -e POSTGRES_USER=stp -e POSTGRES_PASSWORD=stp -e POSTGRES_DB=stp postgres:17-alpine
+# then in backend/.env:  DATABASE_URL=postgres://stp:stp@localhost:5432/stp
+```
 
 ### Frontend
 
@@ -464,6 +523,8 @@ curl -X POST http://localhost:4000/api/data/fetch \
 | `TRUST_PROXY` | backend env | `0` | Reverse-proxy hops in front of the process |
 | `PORT` | backend env | `4000` | API + `/metrics` port |
 | `DUCKDB_PATH` | backend env | `./data/market.duckdb` | Bar cache file |
+| `DATABASE_URL` | `backend/.env` | — | Postgres for the order domain; optional in dev, **required in production** |
+| `PG_POOL_MAX` | backend env | `10` | Postgres pool size |
 | `VITE_API_BASE_URL` | `frontend/.env` | `http://localhost:4000/api` | API base the SPA calls |
 | `VITE_API_KEY` | `frontend/.env` | — | Must match the backend's `API_KEY` |
 
@@ -477,7 +538,31 @@ isn't: `PORT=eight thousand` becomes `NaN` and Express listens on a random port,
 stops being graceful, and a `CORS_ORIGIN` typo silently falls back to localhost.
 
 In production an unset `API_KEY` is a hard failure rather than a generated one, and a
-placeholder or sub-16-character key is refused everywhere.
+placeholder or sub-16-character key is refused everywhere. `DATABASE_URL` is checked the same
+way: a value that is not a parseable `postgres://` URL is refused, and an *absent* one is a
+hard failure in production only — booting a production process whose order routes 503 on every
+call is not a state worth starting into, while running without the order domain is a supported
+development mode.
+
+### Schema migrations
+
+The DuckDB side bootstraps with `CREATE TABLE IF NOT EXISTS`, which is fine because bars can
+be dropped and refetched. Orders cannot, so `backend/migrations/` is applied by a real runner
+(`backend/src/db/migrate.js`) at boot, before the listener opens:
+
+- **Numbered files, applied in order, exactly once.** `001_order_domain.sql`, `002_…`. A file
+  that does not start with a number is an error, and so is a duplicate version.
+- **The whole run is one transaction.** Postgres has transactional DDL, so a failure in
+  migration 7 rolls back 5 and 6 with it. The database is never left holding half a schema
+  change.
+- **A `pg_advisory_xact_lock` guards the run**, because a rolling deploy *guarantees* two
+  instances booting at once. The second waits, then finds nothing to do. The lock is
+  transaction-scoped, so it releases even if the process dies mid-migration.
+- **Applied files are checksummed** (with line endings normalized, so a CRLF checkout on
+  Windows and an LF one in CI agree). Editing a migration that has already run fails loudly
+  instead of producing two databases that report the same version with different schemas.
+
+To change the schema, add a file. Never edit one that has shipped.
 
 ### Request validation
 
@@ -544,12 +629,17 @@ Two probes, answering two different questions, both open without a key:
 
 - `GET /api/health` — **liveness**. Touches nothing else, so a slow query can never be
   mistaken for a dead process and turned into a restart loop.
-- `GET /api/ready` — **readiness**. Runs `SELECT 1` against DuckDB and reports 503
-  (`database_unavailable`) if the handle is broken, or 503 (`draining`) once shutdown begins.
+- `GET /api/ready` — **readiness**. Runs `SELECT 1` against DuckDB and, when `DATABASE_URL` is
+  configured, pings Postgres. Either one failing is 503 `database_unavailable` with a `store`
+  field naming which — a broken DuckDB handle 500s every analytics route and an unreachable
+  Postgres 500s every order route, so either should pull the instance out of rotation. A
+  *deliberately absent* Postgres is not a failure; the body then reports
+  `stores: ["duckdb"]`. Draining is 503 `draining`.
 
 On `SIGTERM`/`SIGINT` the process drains rather than dying mid-response: it flips readiness to
 503, waits `SHUTDOWN_DRAIN_MS` for the load balancer to deregister it, closes the listener
-while letting in-flight requests finish, closes DuckDB, then exits 0. A hard
+while letting in-flight requests finish, closes each store in turn — one refusing to close does
+not strand the others open — then exits 0. A hard
 `SHUTDOWN_TIMEOUT_MS` deadline force-exits non-zero if a step hangs, so the instance never
 lingers waiting for a `SIGKILL`. `uncaughtException` and `unhandledRejection` take the same
 path with exit code 1 — an unknown-state process should be replaced, but it can still finish
@@ -597,13 +687,24 @@ If you move the backend port, update the scrape target in
 ### Running the whole stack in Docker
 
 ```bash
-API_KEY=$(openssl rand -hex 24) docker compose up --build
+API_KEY=$(openssl rand -hex 24) POSTGRES_PASSWORD=$(openssl rand -hex 16) \
+  docker compose up --build
 # SPA  http://localhost:8080   (FRONTEND_PORT to move it)
 # API  http://localhost:4000/api/health   (BACKEND_PORT to move it)
 ```
 
-`API_KEY` is required and has no default — a stack that boots with a known key is an
-unauthenticated stack. Set `GROQ_API_KEY` too if you want the gen-AI routes.
+`API_KEY` and `POSTGRES_PASSWORD` are required and have no defaults — a stack that boots with
+a known key is an unauthenticated stack, and a database with a known password is the same
+problem one layer down. Set `GROQ_API_KEY` too if you want the gen-AI routes.
+
+Three services: `postgres`, `backend`, `frontend`. The backend `depends_on` Postgres with
+`condition: service_healthy` rather than `service_started`, because it migrates on boot and so
+needs a database that *accepts connections*, not merely a container that exists — and the
+healthcheck is `pg_isready -U … -d …` rather than bare `pg_isready`, which returns true while
+the server is still doing its initdb restart, exactly when a dependent container would connect
+and fail. Postgres keeps its data on the `postgres-data` named volume and publishes
+`POSTGRES_PORT` (5432) for `psql`; nothing in the stack needs that port, since the backend
+reaches it over the compose network by service name.
 
 Both images are multi-stage. The backend build stage carries python3/make/g++ for DuckDB's
 native addon so a build never depends on a matching prebuild existing, and the runtime stage
@@ -643,7 +744,7 @@ and should not be carried into a real deployment (see `workplan.md` §9).
 ### Tests
 
 ```bash
-cd backend  && npm test          # 29 Vitest suites; Groq is mocked, no API key needed
+cd backend  && npm test          # 35 Vitest suites; Groq is mocked, no API key needed
 cd frontend && npm run test      # 13 Vitest suites, run once
 cd frontend && npm run test:watch
 cd backend  && npm run lint      # oxlint
@@ -655,7 +756,10 @@ cd frontend && npm run lint
 `.github/workflows/ci.yml` runs on every push and pull request, in two parallel jobs on Node
 22: **backend** lint + test, **frontend** lint + test + build. The backend suites need no
 `GROQ_API_KEY` and no network — Groq is mocked and DuckDB runs in-memory — so a test that
-reaches for a real key or a real upstream fails the build rather than passing quietly.
+reaches for a real key or a real upstream fails the build rather than passing quietly. The
+Postgres layer is the one part not covered: there is no service container in CI and no suite
+over `db/postgres.js` or `db/migrate.js` yet, so the migration runner is currently verified by
+running it, not by a test. That is the next thing to close.
 
 Backend coverage: DuckDB bar storage round-trip, the replay engine (step/rewind/jump-to-date,
 including resimulating from a rewound point), the Groq agents (invalid JSON is retried and, if
@@ -749,6 +853,13 @@ strategy and copilot Groq agents, rules-based risk evaluation with Groq-drafted 
 triage, the indicator library and signal generation, and the full observability stack. The
 Order Blotter, Portfolio, Dashboard and Agent Activity pages are still mock-data UI ahead of
 the corresponding backend agent work.
+
+- **The order domain is a schema, not yet an API.** Postgres is wired in — pool, metrics,
+  readiness ping, shutdown close, and the `001_order_domain.sql` migration with `orders`,
+  `executions`, `order_events` and `idempotency_keys` — but there is no `/api/orders` router,
+  no state machine and no intake path yet, so nothing writes to those tables. The Blotter and
+  Portfolio pages still render `frontend/src/data/mockData.js`. Everything else runs with or
+  without `DATABASE_URL` set.
 
 - Bars for a symbol live in one table regardless of bar size, so fetching both daily and
   5-minute data for the same symbol makes the replay mix granularities. Annualized figures

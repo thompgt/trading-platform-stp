@@ -1,6 +1,7 @@
 # Runbook
 
-One section per alert in `monitoring/prometheus/alerts.yml`. Each answers the same three
+One section per alert in `monitoring/prometheus/alerts.yml`, plus a section for a failure that
+`/api/ready` surfaces before any alert does. Each answers the same three
 questions in the same order, because that is the order the person paged actually needs them:
 **what is happening**, **how to confirm it**, **what to do**.
 
@@ -17,9 +18,13 @@ principles, the section is wrong and should be rewritten after the incident.
 Every investigation starts the same way:
 
 ```bash
-# Is the process up and answering, and is its database reachable?
+# Is the process up and answering, and are its databases reachable?
 curl -s localhost:4000/api/health   # liveness  — the process
-curl -s localhost:4000/api/ready    # readiness — the process AND DuckDB
+curl -s localhost:4000/api/ready    # readiness — the process AND both stores
+
+# A 503 from /api/ready names the store that failed:
+#   {"ok":false,"status":"database_unavailable","store":"postgres"}  → §StoreUnavailable
+#   {"ok":false,"status":"draining"}                                 → it is shutting down
 
 # What has it been doing? Logs are JSON lines; every request has a requestId.
 docker logs stp-backend --since 15m | jq 'select(.level == "error")'
@@ -51,6 +56,30 @@ port moved) rather than the service being dead.
 4. Port moved: update `monitoring/prometheus/prometheus.yml` and
    `curl -X POST localhost:9090/-/reload`.
 
+## StoreUnavailable
+
+**No alert rule fires for this yet** — it is here because `/api/ready` can report it and the
+shared first steps point at it. Wiring an alert on the readiness probe is outstanding work.
+
+**What is happening.** The process is alive but reports 503 `database_unavailable`. The `store`
+field says which: `duckdb` (every analytics and replay route will 500) or `postgres` (the order
+routes will; everything else is fine).
+
+**Confirm.** `stp_pg_pool_connections{state="total"}` at zero with errors in the log means the
+pool cannot reach the server at all — a different problem from a pool that is full, which
+shows as a nonzero total plus a climbing `stp_pg_pool_waiting`.
+
+**Do.**
+1. `docker compose ps postgres` and `docker logs stp-postgres --tail 50`. A container that is
+   restarting is the whole story.
+2. `docker exec stp-postgres pg_isready -U stp -d stp` — the same check compose's healthcheck
+   runs. The `-d` matters: bare `pg_isready` returns true during the initdb restart.
+3. Migration failure at boot looks different — the process exits before listening and the log
+   names the file. A checksum error means an already-applied migration was edited; the fix is
+   to restore that file and add a new migration, never to edit it back into agreement.
+4. `store: "duckdb"`: almost always a second process holding the file's exclusive lock. See
+   *Running on a different port* in the README.
+
 ## HighErrorRate
 
 **What is happening.** More than 5% of requests are 5xx over five minutes.
@@ -71,8 +100,11 @@ One route failing is a bug in that route; every route failing is the database or
 **What is happening.** p95 above 2s on a non-LLM route.
 
 **Confirm.** `stp_duckdb_query_duration_seconds` — if DuckDB is slow, the API is downstream of
-the real problem. `stp_strategy_replay_duration_seconds` — a long replay is CPU-bound and
-blocks the event loop.
+the real problem. `stp_pg_query_duration_seconds` is the same check for the order side, but
+read it next to `stp_pg_pool_waiting`: slow queries and an exhausted pool look identical from
+the API and have opposite fixes — the first is a query to tune, the second is a leaked
+connection or a `PG_POOL_MAX` that is too small.
+`stp_strategy_replay_duration_seconds` — a long replay is CPU-bound and blocks the event loop.
 
 **Do.**
 1. A replay over a long intraday range is genuinely expensive. Confirm the range before

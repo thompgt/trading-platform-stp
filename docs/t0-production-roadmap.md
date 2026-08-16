@@ -28,12 +28,12 @@ gets rebuilt later.
 |---|---|---|
 | 1 | No order/execution domain — no table, no state machine, no intake API | The Blotter and Portfolio pages render `frontend/src/data/mockData.js`. The lifecycle the UI monitors does not exist as data. |
 | 2 | Nothing durable except bars; sessions and settlement runs are in-memory maps | A restart loses trade history. Unacceptable for anything settlement-related. |
-| 3 | DuckDB is the only store | Single exclusive-locked connection, analytical engine. Right for bars, wrong for concurrent order writes. |
+| 3 | ~~DuckDB is the only store~~ *(closed)* | Postgres is in for the OLTP side, with a migration runner applied at boot; DuckDB keeps bars. |
 | 4 | Post-trade runs as a batch procedure over supplied fills | T+0 settlement is continuous and event-driven, with intraday cash and securities availability checks. |
-| 5 | No append-only event log | No state transition is reconstructible; there is no audit trail to show anyone. |
+| 5 | No append-only event log *(table exists, nothing writes to it)* | `order_events` is in the schema. Until the state machine lands, no state transition is reconstructible and there is no audit trail to show anyone. |
 | 6 | One shared API key, embedded in the browser bundle | No users, no roles, no maker-checker approvals for the steps that need a human signature. |
 | 7 | Polling only | Lifecycle monitoring needs push (SSE) or the UI is always stale. |
-| 8 | No app container, migrations, backups, alert rules, or secrets handling | Not deployable by anyone but its author, on the machine it was written on. |
+| 8 | No backups or secrets handling *(container, migrations and alert rules done)* | Still not deployable by anyone but its author, on the machine it was written on. |
 | 9 | AI tools cannot see the platform's own data; no evals, no prompt audit, no cost budget | "AI tools" that can't answer "why did order X fail" are a demo, not a tool. |
 | 10 | No load test, no e2e test, no accessibility pass | Nothing establishes that it works under real volume or for real users. |
 
@@ -54,13 +54,17 @@ Make the process behave like a service before adding surface to it.
 - [x] Dockerfile + compose for the app itself, joined to the existing monitoring stack
 - [x] Prometheus alert rules and a runbook for each one
 
-### Phase 1 — The order domain, on a real transactional store
+### Phase 1 — The order domain, on a real transactional store *(in progress)*
 
 The foundation everything else stands on. Nothing here is UI work.
 
-- [ ] Introduce **Postgres** for the OLTP side; DuckDB stays the analytical store for bars. A migration tool, checked in, applied at boot.
-- [ ] Schema: `orders`, `executions`, `allocations`, `positions`, `cash_movements`, and an
-      append-only `events` table every state change writes to.
+- [x] Introduce **Postgres** for the OLTP side; DuckDB stays the analytical store for bars. A migration tool, checked in, applied at boot. *(`db/postgres.js` — instrumented pool, readiness ping, closed on drain; `db/migrate.js` — numbered files, one transaction, advisory lock, checksums. Optional in dev, required in production.)*
+- [x] Schema, first cut (`001_order_domain.sql`): `orders` with optimistic-concurrency
+      `version`, `executions` unique per `(venue, venue_exec_id)`, append-only `order_events`,
+      and `idempotency_keys` storing the original response body.
+- [ ] Remaining schema: `allocations`, `positions`, `cash_movements`.
+- [ ] Tests and a CI Postgres service — nothing currently covers `db/postgres.js` or
+      `db/migrate.js`, which is the weakest point in the phase.
 - [ ] An explicit order state machine — `NEW → PENDING_RISK → WORKING → PARTIALLY_FILLED →
       FILLED → ALLOCATED → SETTLED`, plus `REJECTED` and `CANCELLED` — where transitions are
       the only way state changes, illegal transitions throw, and each one appends an event.
