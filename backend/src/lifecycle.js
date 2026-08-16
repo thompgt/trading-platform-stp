@@ -30,6 +30,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000
 /**
  * @param {object} options
  * @param {object} options.db open DuckDB handle, closed during shutdown
+ * @param {Array<() => Promise<void>>} [options.extraClosers] other resources to release
  * @param {number} [options.drainMs] time spent reporting not-ready before closing the listener
  * @param {number} [options.shutdownTimeoutMs] hard deadline for the whole sequence
  * @param {object} [options.log] console-shaped logger
@@ -38,6 +39,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000
  */
 export function createLifecycle({
   db,
+  extraClosers = [],
   drainMs = DEFAULT_DRAIN_MS,
   shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS,
   log = console,
@@ -74,12 +76,15 @@ export function createLifecycle({
     await closeServer()
     log.log?.('HTTP listener closed; closing the database')
 
-    try {
-      await db?.close?.()
-    } catch (err) {
-      // A failed close is worth reporting but not worth blocking the exit on — the process
-      // is going away, and DuckDB recovers its WAL on the next open.
-      log.error?.('Failed to close the database cleanly', err)
+    // Every store gets its own try: one refusing to close must not strand the others open,
+    // and none of them is worth blocking the exit on — the process is going away, DuckDB
+    // recovers its WAL on the next open, and Postgres reclaims a dropped connection.
+    for (const close of [() => db?.close?.(), ...extraClosers]) {
+      try {
+        await close()
+      } catch (err) {
+        log.error?.('Failed to close a store cleanly', err)
+      }
     }
     log.log?.('Shutdown complete')
   }

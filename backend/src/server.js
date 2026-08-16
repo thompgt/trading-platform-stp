@@ -3,6 +3,8 @@ import { createApp, DEFAULT_ORIGINS } from './app.js'
 import { openDatabase, initSchema } from './db/duckdb.js'
 import { enableDefaultMetrics } from './metrics/registry.js'
 import { createLifecycle } from './lifecycle.js'
+import { createPostgres } from './db/postgres.js'
+import { migrate } from './db/migrate.js'
 import { loadConfig, ConfigError } from './config.js'
 import { createLogger } from './lib/logger.js'
 
@@ -29,9 +31,29 @@ enableDefaultMetrics()
 const db = openDatabase(config.dbPath)
 await initSchema(db)
 
+// The transactional store. Optional outside production, because the market-data, replay and
+// analytics surfaces predate the order domain and still work without it — the order routes
+// are the part that needs it, and they say so rather than the whole process refusing to boot.
+let pg = null
+if (config.databaseUrl) {
+  pg = createPostgres({
+    connectionString: config.databaseUrl,
+    max: config.pgPoolMax,
+    logger,
+  })
+  // Migrate before listening. A process that accepts traffic against a schema it has not
+  // finished migrating will fail requests in ways that look like bugs in the routes.
+  await migrate(pg, { logger })
+} else {
+  logger.warn('DATABASE_URL is not set — the order domain is unavailable', {
+    affected: '/api/orders',
+  })
+}
+
 // Installed before the listener exists: a crash during boot should still close the database.
 const lifecycle = createLifecycle({
   db,
+  extraClosers: pg ? [() => pg.close()] : [],
   drainMs: config.drainMs,
   shutdownTimeoutMs: config.shutdownTimeoutMs,
   log: {
@@ -48,6 +70,7 @@ const app = createApp(db, {
   trustProxy: config.trustProxy,
   isDraining: lifecycle.isDraining,
   logger,
+  pg,
 })
 
 const server = app.listen(config.port, () => {

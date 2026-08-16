@@ -31,6 +31,7 @@ const DEFAULT_JSON_LIMIT = '2mb'
  * @param {number} [options.trustProxy] reverse-proxy hops in front of this process
  * @param {() => boolean} [options.isDraining] true once graceful shutdown has begun
  * @param {object} [options.logger] structured logger for the access log
+ * @param {object|null} [options.pg] Postgres handle backing the order domain
  */
 export function createApp(
   db,
@@ -41,6 +42,7 @@ export function createApp(
     trustProxy = 0,
     isDraining = () => false,
     logger = defaultLogger,
+    pg = null,
   } = {},
 ) {
   const app = express()
@@ -65,7 +67,7 @@ export function createApp(
   // Before the routes, so every request — including 404s — is counted.
   app.use(httpMetricsMiddleware)
 
-  app.use(healthRouter(db, { isDraining }))
+  app.use(healthRouter(db, { isDraining, pg }))
   app.use(metricsRouter())
 
   // Everything below this line needs the key. The probes and /metrics are listed as public

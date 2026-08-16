@@ -5,7 +5,7 @@
  * The failure this prevents is the expensive kind. `PORT=eight thousand` becomes `NaN` and
  * Express listens on a random port. `SHUTDOWN_DRAIN_MS=abc` becomes `NaN` and the drain
  * `setTimeout` fires immediately, so the graceful shutdown quietly stops being graceful.
- * `CORS_ORIGIN=*` is dropped by `parseOrigins`, leaving an operator convinced they opened
+ * `CORS_ORIGIN=*` used to be dropped in silence, leaving an operator convinced they opened
  * the API to a domain that is in fact rejected. Every one of those starts a process that
  * looks healthy and is not, which is strictly worse than not starting.
  *
@@ -138,6 +138,29 @@ export function loadConfig(env = process.env, { defaultOrigins = [], generateKey
     drainMs: readInt(env, 'SHUTDOWN_DRAIN_MS', 5000, { min: 0, max: 120_000 }, problems),
     shutdownTimeoutMs: readInt(env, 'SHUTDOWN_TIMEOUT_MS', 15_000, { min: 1000, max: 300_000 }, problems),
     groqApiKey: env.GROQ_API_KEY || null,
+    // The transactional store for the order domain. DuckDB stays the analytical store, so
+    // this is a second connection rather than a replacement — see db/postgres.js.
+    databaseUrl: env.DATABASE_URL || null,
+    pgPoolMax: readInt(env, 'PG_POOL_MAX', 10, { min: 1, max: 100 }, problems),
+  }
+
+  if (config.databaseUrl) {
+    let url
+    try {
+      url = new URL(config.databaseUrl)
+    } catch {
+      url = null
+      problems.push('DATABASE_URL is not a valid connection URL (postgres://user:pass@host/db)')
+    }
+    if (url && !['postgres:', 'postgresql:'].includes(url.protocol)) {
+      problems.push(`DATABASE_URL must be a postgres:// URL, got "${url.protocol}//"`)
+    }
+  } else if (config.isProduction) {
+    // Outside production the app still runs without it — the market-data, replay and
+    // analytics surfaces predate the order domain and do not need it. In production, a
+    // missing DATABASE_URL means the order routes 503 on every call, which is not a state
+    // worth booting into.
+    problems.push('DATABASE_URL must be set in production; the order domain requires Postgres')
   }
 
   if (config.drainMs >= config.shutdownTimeoutMs) {
