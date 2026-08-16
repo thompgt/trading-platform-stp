@@ -1,6 +1,7 @@
 # The application stack: the API and the SPA that talks to it.
 #
-#   API_KEY=$(openssl rand -hex 24) docker compose up --build
+#   API_KEY=$(openssl rand -hex 24) POSTGRES_PASSWORD=$(openssl rand -hex 16) \
+#     docker compose up --build
 #   SPA:  http://localhost:8080   (FRONTEND_PORT to move it)
 #   API:  http://localhost:4000/api/health  (BACKEND_PORT to move it)
 #
@@ -8,10 +9,38 @@
 # started separately. It scrapes the backend through the published host port, so it works the
 # same whether the backend runs here or with `npm run dev`.
 #
-# API_KEY is required and deliberately has no default: a stack that boots with a known key is
-# an unauthenticated stack. The backend refuses to start without one in production anyway.
+# API_KEY and POSTGRES_PASSWORD are required and deliberately have no defaults: a stack that
+# boots with a known key is an unauthenticated stack, and a database with a known password is
+# the same problem one layer down. The backend refuses to start without an API_KEY in
+# production anyway, and compose refuses to start at all without a POSTGRES_PASSWORD.
 
 services:
+  # The transactional store for the order domain. DuckDB (a file on the backend's volume)
+  # stays the analytical store for bars — two engines, each doing what it is good at.
+  postgres:
+    image: postgres:17-alpine
+    container_name: stp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-stp}
+    ports:
+      # Published for psql and local development. Nothing in the stack needs it — the backend
+      # reaches Postgres over the compose network by service name.
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone returns true while the server is still doing its initdb restart,
+      # which is exactly when a dependent container would connect and fail. The -d flag makes
+      # it check the actual database.
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-stp} -d ${POSTGRES_DB:-stp}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
   backend:
     build:
       context: ./backend
@@ -34,8 +63,14 @@ services:
       # value that matters behind a real balancer is visible in one place.
       TRUST_PROXY: '0'
       GROQ_API_KEY: ${GROQ_API_KEY:-}
+      DATABASE_URL: postgres://${POSTGRES_USER:-stp}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-stp}
     volumes:
       - backend-data:/app/data
+    depends_on:
+      postgres:
+        # Not `service_started`: the backend migrates on boot, so it needs a database that
+        # accepts connections, not merely a container that exists.
+        condition: service_healthy
     # Give the drain in src/lifecycle.js room to finish before Docker escalates to SIGKILL:
     # comfortably above SHUTDOWN_DRAIN_MS + SHUTDOWN_TIMEOUT_MS.
     stop_grace_period: 30s
@@ -58,3 +93,4 @@ services:
 
 volumes:
   backend-data:
+  postgres-data:
